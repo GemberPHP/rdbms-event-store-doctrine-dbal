@@ -1,0 +1,65 @@
+{
+    "name": "gember/event-store-doctrine-dbal",
+    "description": "Gember Event store (gember/event-sourcing) implementation based on doctrine/dbal",
+    "license": "MIT",
+    "type": "library",
+    "keywords": [
+        "gember",
+        "event-sourcing",
+        "ddd",
+        "domain-driven-design",
+        "cqrs",
+        "event-store",
+        "doctrine",
+        "dbal"
+    ],
+    "authors": [
+        {
+            "name": "Jeroen de Graaf",
+            "email": "gember@jero.work",
+            "homepage": "https://jero.work"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "doctrine/dbal": "^4.0",
+        "gember/event-sourcing": "dev-main"
+    },
+    "require-dev": {
+        "captainhook/captainhook": "^5.23",
+        "friendsofphp/php-cs-fixer": "^3.58",
+        "phpstan/phpstan": "^1.11",
+        "phpunit/phpunit": "^11.1",
+        "rregeer/phpunit-coverage-check": "^0.3.1",
+        "shipmonk/composer-dependency-analyser": "^1.5",
+        "symfony/property-access": "^7.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Gember\\EventStoreDoctrineDbal\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Gember\\EventStoreDoctrineDbal\\Test\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "coverage": "vendor/bin/coverage-check var/coverage/clover.xml 95",
+        "cs": "vendor/bin/php-cs-fixer fix --diff --dry-run --config=.php-cs-fixer.php",
+        "cs:fix": "vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php",
+        "dependency-analyser": "vendor/bin/composer-dependency-analyser",
+        "phpstan": "vendor/bin/phpstan analyse -c phpstan.neon",
+        "phpunit": "XDEBUG_MODE=coverage vendor/bin/phpunit",
+        "test": [
+            "@cs",
+            "@dependency-analyser",
+            "@phpstan",
+            "@phpunit",
+            "@coverage"
+        ]
+    }
+}

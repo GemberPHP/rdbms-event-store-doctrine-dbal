@@ -1,0 +1,2 @@
+# 🫚 Gember Event store: Doctrine DBAL
+Gember Event store ([gember/event-sourcing](https://github.com/GemberPHP/event-sourcing)) implementation based on [doctrine/dbal](https://github.com/doctrine/dbal).

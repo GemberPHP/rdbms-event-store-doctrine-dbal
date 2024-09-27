@@ -1,5 +1,5 @@
 {
-    "name": "gember/event-store-doctrine-dbal",
+    "name": "gember/rdbms-event-store-doctrine-dbal",
     "description": "Gember Event store (gember/event-sourcing) implementation based on doctrine/dbal",
     "license": "MIT",
     "type": "library",
@@ -36,12 +36,12 @@
     },
     "autoload": {
         "psr-4": {
-            "Gember\\EventStoreDoctrineDbal\\": "src/"
+            "Gember\\RdbmsEventStoreDoctrineDbal\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Gember\\EventStoreDoctrineDbal\\Test\\": "tests/"
+            "Gember\\RdbmsEventStoreDoctrineDbal\\Test\\": "tests/"
         }
     },
     "config": {

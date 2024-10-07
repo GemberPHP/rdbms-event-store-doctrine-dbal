@@ -3,7 +3,10 @@
         "enabled": true,
         "actions": [
             {
-                "action": "composer cs"
+                "action": "composer cs:dry-run"
+            },
+            {
+                "action": "composer rector:dry-run"
             },
             {
                 "action": "composer phpstan"

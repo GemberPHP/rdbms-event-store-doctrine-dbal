@@ -46,6 +46,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $queryBuilder->allows('andWhere')->andReturn($queryBuilder);
         $queryBuilder->allows('setParameter')->andReturn($queryBuilder);
         $queryBuilder->allows('orderBy')->andReturn($queryBuilder);
+        $queryBuilder->allows('setMaxResults')->andReturn($queryBuilder);
         $queryBuilder->allows('executeQuery')->andReturn($this->result);
 
         $this->repository = new DoctrineDbalRdbmsEventStoreRepository(

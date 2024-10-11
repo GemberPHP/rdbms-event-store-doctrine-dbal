@@ -82,9 +82,9 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
 
-        /** @var array{id?: string} $row */
+        /** @var list<string> $row */
         $row = $this->connection->createQueryBuilder()
-            ->select(sprintf('es.%s as id', $eventStoreSchema->eventIdFieldName))
+            ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
             ->from($eventStoreSchema->tableName, 'es')
             ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
                 'es.%s = esr.%s',
@@ -94,10 +94,11 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             ->andWhere(sprintf('esr.%s IN(:domainIds)', $eventStoreRelationSchema->domainIdFieldName))
             ->setParameter('domainIds', $domainIds, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
+            ->setMaxResults(1)
             ->executeQuery()
             ->fetchFirstColumn();
 
-        return $row['id'] ?? null;
+        return $row[array_key_first($row)] ?? null;
     }
 
     #[Override]

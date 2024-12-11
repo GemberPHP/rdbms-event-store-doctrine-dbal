@@ -22,12 +22,15 @@ final readonly class DoctrineDbalRdbmsEventFactory
      */
     public function createFromRow(array $row): RdbmsEvent
     {
+        /** @var array<string, mixed> $metadata */
+        $metadata = (array) json_decode($row['metadata'], true, flags: JSON_THROW_ON_ERROR);
+
         return new RdbmsEvent(
             $row['eventId'],
             [],
             $row['eventName'],
             $row['payload'],
-            (array) json_decode($row['metadata'], true, flags: JSON_THROW_ON_ERROR),
+            $metadata,
             new DateTimeImmutable($row['appliedAt']),
         );
     }

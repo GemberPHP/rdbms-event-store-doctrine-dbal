@@ -23,17 +23,17 @@
     "require": {
         "php": "^8.3",
         "doctrine/dbal": "^4.0",
-        "gember/event-sourcing": "dev-main"
+        "gember/event-sourcing": "^0.1"
     },
     "require-dev": {
         "captainhook/captainhook": "^5.23",
         "friendsofphp/php-cs-fixer": "^3.58",
         "mockery/mockery": "^1.6",
         "phpstan/extension-installer": "^1.4",
-        "phpstan/phpstan": "^1.11",
-        "phpstan/phpstan-mockery": "^1.1",
-        "phpunit/phpunit": "^11.1",
-        "rector/rector": "^1.2",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-mockery": "^2.0",
+        "phpunit/phpunit": "^12.1",
+        "rector/rector": "^2.0",
         "rregeer/phpunit-coverage-check": "^0.3.1",
         "shipmonk/composer-dependency-analyser": "^1.5",
         "symfony/property-access": "^7.0"

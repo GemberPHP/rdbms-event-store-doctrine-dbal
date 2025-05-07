@@ -28,10 +28,7 @@
     "require-dev": {
         "captainhook/captainhook": "^5.23",
         "friendsofphp/php-cs-fixer": "^3.58",
-        "mockery/mockery": "^1.6",
-        "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan": "^2.1",
-        "phpstan/phpstan-mockery": "^2.0",
         "phpunit/phpunit": "^12.1",
         "rector/rector": "^2.0",
         "rregeer/phpunit-coverage-check": "^0.3.1",
@@ -50,10 +47,7 @@
         }
     },
     "config": {
-        "sort-packages": true,
-        "allow-plugins": {
-            "phpstan/extension-installer": true
-        }
+        "sort-packages": true
     },
     "scripts": {
         "coverage": "vendor/bin/coverage-check var/coverage/clover.xml 65",

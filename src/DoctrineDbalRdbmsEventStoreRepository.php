@@ -55,7 +55,9 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                 $eventStoreSchema->eventIdFieldName,
                 $eventStoreRelationSchema->eventIdFieldName,
             ))
+            ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
             ->andWhere(sprintf('esr.%s IN(:domainIds)', $eventStoreRelationSchema->domainIdFieldName))
+            ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
             ->setParameter('domainIds', $domainIds, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'asc')
             ->executeQuery()
@@ -91,7 +93,9 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                 $eventStoreSchema->eventIdFieldName,
                 $eventStoreRelationSchema->eventIdFieldName,
             ))
+            ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
             ->andWhere(sprintf('esr.%s IN(:domainIds)', $eventStoreRelationSchema->domainIdFieldName))
+            ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
             ->setParameter('domainIds', $domainIds, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
             ->setMaxResults(1)

@@ -1554,16 +1554,16 @@
         },
         {
             "name": "jms/serializer",
-            "version": "3.32.4",
+            "version": "3.32.5",
             "source": {
                 "type": "git",
                 "url": "https://github.com/schmittjoh/serializer.git",
-                "reference": "f5c6227b2664d1e75fda65f1e6c5686a0c034b31"
+                "reference": "7c88b1b02ff868eecc870eeddbb3b1250e4bd89c"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/schmittjoh/serializer/zipball/f5c6227b2664d1e75fda65f1e6c5686a0c034b31",
-                "reference": "f5c6227b2664d1e75fda65f1e6c5686a0c034b31",
+                "url": "https://api.github.com/repos/schmittjoh/serializer/zipball/7c88b1b02ff868eecc870eeddbb3b1250e4bd89c",
+                "reference": "7c88b1b02ff868eecc870eeddbb3b1250e4bd89c",
                 "shasum": ""
             },
             "require": {
@@ -1640,7 +1640,7 @@
             ],
             "support": {
                 "issues": "https://github.com/schmittjoh/serializer/issues",
-                "source": "https://github.com/schmittjoh/serializer/tree/3.32.4"
+                "source": "https://github.com/schmittjoh/serializer/tree/3.32.5"
             },
             "funding": [
                 {
@@ -1652,7 +1652,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2025-04-06T18:42:47+00:00"
+            "time": "2025-05-26T15:55:41+00:00"
         },
         {
             "name": "myclabs/deep-copy",
@@ -4581,16 +4581,16 @@
         },
         {
             "name": "symfony/console",
-            "version": "v7.3.0",
+            "version": "v7.3.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/console.git",
-                "reference": "66c1440edf6f339fd82ed6c7caa76cb006211b44"
+                "reference": "9e27aecde8f506ba0fd1d9989620c04a87697101"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/console/zipball/66c1440edf6f339fd82ed6c7caa76cb006211b44",
-                "reference": "66c1440edf6f339fd82ed6c7caa76cb006211b44",
+                "url": "https://api.github.com/repos/symfony/console/zipball/9e27aecde8f506ba0fd1d9989620c04a87697101",
+                "reference": "9e27aecde8f506ba0fd1d9989620c04a87697101",
                 "shasum": ""
             },
             "require": {
@@ -4655,7 +4655,7 @@
                 "terminal"
             ],
             "support": {
-                "source": "https://github.com/symfony/console/tree/v7.3.0"
+                "source": "https://github.com/symfony/console/tree/v7.3.1"
             },
             "funding": [
                 {
@@ -4671,7 +4671,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2025-05-24T10:34:04+00:00"
+            "time": "2025-06-27T19:55:54+00:00"
         },
         {
             "name": "symfony/deprecation-contracts",
@@ -6154,25 +6154,25 @@
         },
         {
             "name": "uma/ocular",
-            "version": "v2.0.0",
+            "version": "v2.0.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/1ma/ocular.git",
-                "reference": "00def360d39ed64f27b62d8672f93da6cdfd5e85"
+                "reference": "1588f44e4b85d424c12e5225f2f6cedbabfd7faf"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/1ma/ocular/zipball/00def360d39ed64f27b62d8672f93da6cdfd5e85",
-                "reference": "00def360d39ed64f27b62d8672f93da6cdfd5e85",
+                "url": "https://api.github.com/repos/1ma/ocular/zipball/1588f44e4b85d424c12e5225f2f6cedbabfd7faf",
+                "reference": "1588f44e4b85d424c12e5225f2f6cedbabfd7faf",
                 "shasum": ""
             },
             "require": {
                 "guzzlehttp/guzzle": "^7.8",
                 "jms/serializer": "^3.30",
-                "php": "^8.2",
+                "php": "^8.1",
                 "phpoption/phpoption": "^1.9",
-                "symfony/console": "^7.0",
-                "symfony/process": "^7.0"
+                "symfony/console": "^6.0 || ^7.0",
+                "symfony/process": "^6.0 || ^7.0"
             },
             "require-dev": {
                 "phpunit/phpunit": "^11.1",
@@ -6193,9 +6193,9 @@
             ],
             "description": "Fork of scrutinizer/ocular with up to date maintenance",
             "support": {
-                "source": "https://github.com/1ma/ocular/tree/v2.0.0"
+                "source": "https://github.com/1ma/ocular/tree/v2.0.2"
             },
-            "time": "2024-05-26T18:16:56+00:00"
+            "time": "2025-07-08T08:55:19+00:00"
         }
     ],
     "aliases": [],

@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c7ce3c6df25bca84e8332ac7e08f61b9",
+    "content-hash": "03dd2553a1fcd1caf46875875d7cdfcc",
     "packages": [
         {
             "name": "doctrine/dbal",
@@ -162,16 +162,16 @@
         },
         {
             "name": "gember/event-sourcing",
-            "version": "0.3.0",
+            "version": "0.4.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/GemberPHP/event-sourcing.git",
-                "reference": "8c7295d90f4baa12bb2fd1230d23c1ecd1ac5279"
+                "reference": "5a92172dd7348441c09fadbc9ad9d501c049dbb2"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/GemberPHP/event-sourcing/zipball/8c7295d90f4baa12bb2fd1230d23c1ecd1ac5279",
-                "reference": "8c7295d90f4baa12bb2fd1230d23c1ecd1ac5279",
+                "url": "https://api.github.com/repos/GemberPHP/event-sourcing/zipball/5a92172dd7348441c09fadbc9ad9d501c049dbb2",
+                "reference": "5a92172dd7348441c09fadbc9ad9d501c049dbb2",
                 "shasum": ""
             },
             "require": {
@@ -218,9 +218,9 @@
             ],
             "support": {
                 "issues": "https://github.com/GemberPHP/event-sourcing/issues",
-                "source": "https://github.com/GemberPHP/event-sourcing/tree/0.3.0"
+                "source": "https://github.com/GemberPHP/event-sourcing/tree/0.4.0"
             },
-            "time": "2025-05-10T11:55:15+00:00"
+            "time": "2025-08-27T17:11:40+00:00"
         },
         {
             "name": "psr/cache",

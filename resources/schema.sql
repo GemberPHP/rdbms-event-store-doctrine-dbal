@@ -10,7 +10,7 @@ CREATE TABLE `event_store` (
 
 CREATE TABLE `event_store_relation` (
   `event_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `domain_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  PRIMARY KEY (`event_id`,`domain_id`),
+  `domain_tag` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  PRIMARY KEY (`event_id`,`domain_tag`),
   CONSTRAINT `event_store_relation_ibfk_1` FOREIGN KEY (`event_id`) REFERENCES `event_store` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

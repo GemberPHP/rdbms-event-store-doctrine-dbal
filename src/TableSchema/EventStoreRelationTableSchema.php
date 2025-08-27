@@ -9,6 +9,6 @@ final readonly class EventStoreRelationTableSchema
     public function __construct(
         public string $tableName,
         public string $eventIdFieldName,
-        public string $domainIdFieldName,
+        public string $domainTagFieldName,
     ) {}
 }

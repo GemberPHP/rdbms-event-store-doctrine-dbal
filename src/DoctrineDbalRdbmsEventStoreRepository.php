@@ -20,7 +20,7 @@ use Throwable;
  *     payload: string,
  *     metadata: string,
  *     appliedAt: string,
- *     domainId: string
+ *     domainTag: string
  * }
  */
 final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEventStoreRepository
@@ -33,7 +33,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     ) {}
 
     #[Override]
-    public function getEvents(array $domainIds, array $eventNames): array
+    public function getEvents(array $domainTags, array $eventNames): array
     {
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
@@ -46,7 +46,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                 es.{$eventStoreSchema->eventNameFieldName} as eventName,
                 es.{$eventStoreSchema->appliedAtFieldName} as appliedAt,
                 es.{$eventStoreSchema->metadataFieldName} as metadata,
-                esr.{$eventStoreRelationSchema->domainIdFieldName} as domainId
+                esr.{$eventStoreRelationSchema->domainTagFieldName} as domainTag
                 DQL
             )
             ->from($eventStoreSchema->tableName, 'es')
@@ -56,9 +56,9 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                 $eventStoreRelationSchema->eventIdFieldName,
             ))
             ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
-            ->andWhere(sprintf('esr.%s IN(:domainIds)', $eventStoreRelationSchema->domainIdFieldName))
+            ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
             ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
-            ->setParameter('domainIds', $domainIds, ArrayParameterType::STRING)
+            ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'asc')
             ->executeQuery()
             ->fetchAllAssociative();
@@ -72,14 +72,14 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
 
             $event = $events[$eventId] ?? $this->rdbmsEventFactory->createFromRow($row);
 
-            $events[$eventId] = $event->withDomainId($row['domainId']);
+            $events[$eventId] = $event->withDomainTag($row['domainTag']);
         }
 
         return array_values($events);
     }
 
     #[Override]
-    public function getLastEventIdPersisted(array $domainIds, array $eventNames): ?string
+    public function getLastEventIdPersisted(array $domainTags, array $eventNames): ?string
     {
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
@@ -94,9 +94,9 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                 $eventStoreRelationSchema->eventIdFieldName,
             ))
             ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
-            ->andWhere(sprintf('esr.%s IN(:domainIds)', $eventStoreRelationSchema->domainIdFieldName))
+            ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
             ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
-            ->setParameter('domainIds', $domainIds, ArrayParameterType::STRING)
+            ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
             ->setMaxResults(1)
             ->executeQuery()
@@ -131,14 +131,14 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                     ])
                     ->executeStatement();
 
-                foreach ($event->domainIds as $domainId) {
+                foreach ($event->domainTags as $domainTag) {
                     $this->connection->createQueryBuilder()
                         ->insert($eventStoreRelationSchema->tableName)
                         ->setValue($eventStoreRelationSchema->eventIdFieldName, ':eventId')
-                        ->setValue($eventStoreRelationSchema->domainIdFieldName, ':domainId')
+                        ->setValue($eventStoreRelationSchema->domainTagFieldName, ':domainTag')
                         ->setParameters([
                             'eventId' => $event->eventId,
-                            'domainId' => $domainId,
+                            'domainTag' => $domainTag,
                         ])
                         ->executeStatement();
                 }

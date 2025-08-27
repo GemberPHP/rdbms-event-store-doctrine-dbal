@@ -56,7 +56,7 @@ final class TableSchemaFactoryTest extends TestCase
 
         self::assertSame('event_store_relation', $schema->tableName);
         self::assertSame('event_id', $schema->eventIdFieldName);
-        self::assertSame('domain_id', $schema->domainIdFieldName);
+        self::assertSame('domain_tag', $schema->domainTagFieldName);
     }
 
     #[Test]
@@ -65,11 +65,11 @@ final class TableSchemaFactoryTest extends TestCase
         $schema = TableSchemaFactory::createDefaultEventStoreRelation(
             'custom_event_store_relation',
             'custom_event_id',
-            'custom_domain_id',
+            'custom_domain_tag',
         );
 
         self::assertSame('custom_event_store_relation', $schema->tableName);
         self::assertSame('custom_event_id', $schema->eventIdFieldName);
-        self::assertSame('custom_domain_id', $schema->domainIdFieldName);
+        self::assertSame('custom_domain_tag', $schema->domainTagFieldName);
     }
 }

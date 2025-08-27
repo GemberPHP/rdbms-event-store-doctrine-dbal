@@ -29,12 +29,12 @@ final readonly class TableSchemaFactory
     public static function createDefaultEventStoreRelation(
         string $tableName = 'event_store_relation',
         string $eventIdFieldName = 'event_id',
-        string $domainIdFieldName = 'domain_id',
+        string $domainTagFieldName = 'domain_tag',
     ): EventStoreRelationTableSchema {
         return new EventStoreRelationTableSchema(
             $tableName,
             $eventIdFieldName,
-            $domainIdFieldName,
+            $domainTagFieldName,
         );
     }
 }

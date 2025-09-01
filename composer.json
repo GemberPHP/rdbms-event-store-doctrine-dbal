@@ -23,7 +23,7 @@
     "require": {
         "php": "^8.3",
         "doctrine/dbal": "^4.0",
-        "gember/event-sourcing": "^0.5"
+        "gember/event-sourcing": "^0.6"
     },
     "require-dev": {
         "captainhook/captainhook": "^5.23",

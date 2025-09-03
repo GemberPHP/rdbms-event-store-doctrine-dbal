@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Gember\RdbmsEventStoreDoctrineDbal;
 
 use DateTimeImmutable;
-use Gember\EventSourcing\EventStore\Rdbms\RdbmsEvent;
+use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use JsonException;
 use DateMalformedStringException;
 

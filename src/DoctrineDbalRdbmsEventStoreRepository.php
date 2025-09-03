@@ -6,8 +6,8 @@ namespace Gember\RdbmsEventStoreDoctrineDbal;
 
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
-use Gember\EventSourcing\EventStore\Rdbms\RdbmsEvent;
-use Gember\EventSourcing\EventStore\Rdbms\RdbmsEventStoreRepository;
+use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
+use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEventStoreRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\EventStoreRelationTableSchema;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\EventStoreTableSchema;
 use Override;

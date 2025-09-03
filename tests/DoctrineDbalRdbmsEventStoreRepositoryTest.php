@@ -6,7 +6,7 @@ namespace Gember\RdbmsEventStoreDoctrineDbal\Test;
 
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Tools\DsnParser;
-use Gember\EventSourcing\EventStore\Rdbms\RdbmsEvent;
+use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventStoreRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\TableSchemaFactory;

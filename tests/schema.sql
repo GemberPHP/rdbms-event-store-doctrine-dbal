@@ -10,3 +10,11 @@ CREATE TABLE `event_store_relation` (
   `event_id` varchar(50) NOT NULL,
   `domain_tag` varchar(50) NOT NULL
 );
+
+CREATE TABLE `saga_store` (
+  `saga_id` varchar(50),
+  `saga_name` varchar(255),
+  `payload` json NOT NULL,
+  `created_at` timestamp(6) NOT NULL,
+  `updated_at` timestamp(6) NULL DEFAULT NULL
+);

@@ -21,8 +21,9 @@ final readonly class DoctrineDbalRdbmsSagaFactory
     public function createFromRow(array $row): RdbmsSaga
     {
         return new RdbmsSaga(
+            $row['id'],
             $row['sagaName'],
-            $row['sagaId'],
+            $row['sagaIds'],
             $row['payload'],
             new DateTimeImmutable($row['createdAt']),
             $row['updatedAt'] !== null ? new DateTimeImmutable($row['updatedAt']) : null,

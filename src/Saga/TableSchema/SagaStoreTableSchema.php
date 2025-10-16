@@ -8,7 +8,7 @@ final readonly class SagaStoreTableSchema
 {
     public function __construct(
         public string $tableName,
-        public string $sagaIdFieldName,
+        public string $idFieldName,
         public string $sagaNameFieldName,
         public string $payloadFieldName,
         public string $createdAtFieldName,

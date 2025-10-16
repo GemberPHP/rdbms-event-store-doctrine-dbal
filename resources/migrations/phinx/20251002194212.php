@@ -8,8 +8,8 @@ final class V20251002194212 extends AbstractMigration
 {
     public function change(): void
     {
-        $this->table('saga_store', ['id' => false, 'primary_key' => ['saga_id', 'saga_name']])
-            ->addColumn('saga_id', 'string', ['limit' => 50, 'null' => false])
+        $this->table('saga_store', ['id' => false, 'primary_key' => 'id'])
+            ->addColumn('id', 'string', ['limit' => 50, 'null' => false])
             ->addColumn('saga_name', 'string', ['null' => false])
             ->addColumn('payload', 'json', ['null' => false])
             ->addColumn('created_at', 'timestamp', ['limit' => 6, 'null' => false])

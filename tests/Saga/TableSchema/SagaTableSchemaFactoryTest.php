@@ -14,12 +14,12 @@ use PHPUnit\Framework\Attributes\Test;
 final class SagaTableSchemaFactoryTest extends TestCase
 {
     #[Test]
-    public function itShouldCreateDefaultEventStoreTableSchema(): void
+    public function itShouldCreateDefaultSagaStoreTableSchema(): void
     {
         $schema = SagaTableSchemaFactory::createDefaultSagaStore();
 
         self::assertSame('saga_store', $schema->tableName);
-        self::assertSame('saga_id', $schema->sagaIdFieldName);
+        self::assertSame('id', $schema->idFieldName);
         self::assertSame('saga_name', $schema->sagaNameFieldName);
         self::assertSame('payload', $schema->payloadFieldName);
         self::assertSame('created_at', $schema->createdAtFieldName);
@@ -29,11 +29,11 @@ final class SagaTableSchemaFactoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldCreateCustomEventStoreTableSchema(): void
+    public function itShouldCreateCustomSagaStoreTableSchema(): void
     {
         $schema = SagaTableSchemaFactory::createDefaultSagaStore(
             'custom_saga_store',
-            'custom_saga_id',
+            'custom_id',
             'custom_saga_name',
             'custom_payload',
             'custom_created_at',
@@ -43,12 +43,36 @@ final class SagaTableSchemaFactoryTest extends TestCase
         );
 
         self::assertSame('custom_saga_store', $schema->tableName);
-        self::assertSame('custom_saga_id', $schema->sagaIdFieldName);
+        self::assertSame('custom_id', $schema->idFieldName);
         self::assertSame('custom_saga_name', $schema->sagaNameFieldName);
         self::assertSame('custom_payload', $schema->payloadFieldName);
         self::assertSame('custom_created_at', $schema->createdAtFieldName);
         self::assertSame('custom_created_at_format', $schema->createdAtFieldFormat);
         self::assertSame('custom_updated_at', $schema->updatedAtFieldName);
         self::assertSame('custom_updated_at_format', $schema->updatedAtFieldFormat);
+    }
+
+    #[Test]
+    public function itShouldCreateDefaultSagaStoreRelationTableSchema(): void
+    {
+        $schema = SagaTableSchemaFactory::createDefaultSagaStoreRelation();
+
+        self::assertSame('saga_store_relation', $schema->tableName);
+        self::assertSame('id', $schema->idFieldName);
+        self::assertSame('saga_id', $schema->sagaIdFieldName);
+    }
+
+    #[Test]
+    public function itShouldCreateCustomSagaStoreRelationTableSchema(): void
+    {
+        $schema = SagaTableSchemaFactory::createDefaultSagaStoreRelation(
+            'custom_saga_store',
+            'custom_id',
+            'custom_saga_id',
+        );
+
+        self::assertSame('custom_saga_store', $schema->tableName);
+        self::assertSame('custom_id', $schema->idFieldName);
+        self::assertSame('custom_saga_id', $schema->sagaIdFieldName);
     }
 }

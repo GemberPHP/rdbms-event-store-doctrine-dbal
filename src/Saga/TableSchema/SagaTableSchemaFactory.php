@@ -8,7 +8,7 @@ final readonly class SagaTableSchemaFactory
 {
     public static function createDefaultSagaStore(
         string $tableName = 'saga_store',
-        string $sagaIdFieldName = 'saga_id',
+        string $idFieldName = 'id',
         string $sagaNameFieldName = 'saga_name',
         string $payloadFieldName = 'payload',
         string $createdAtFieldName = 'created_at',
@@ -18,13 +18,25 @@ final readonly class SagaTableSchemaFactory
     ): SagaStoreTableSchema {
         return new SagaStoreTableSchema(
             $tableName,
-            $sagaIdFieldName,
+            $idFieldName,
             $sagaNameFieldName,
             $payloadFieldName,
             $createdAtFieldName,
             $createdAtFieldFormat,
             $updatedAtFieldName,
             $updatedAtFieldFormat,
+        );
+    }
+
+    public static function createDefaultSagaStoreRelation(
+        string $tableName = 'saga_store_relation',
+        string $idFieldName = 'id',
+        string $sagaIdFieldName = 'saga_id',
+    ): SagaStoreRelationTableSchema {
+        return new SagaStoreRelationTableSchema(
+            $tableName,
+            $idFieldName,
+            $sagaIdFieldName,
         );
     }
 }

@@ -16,10 +16,17 @@ CREATE TABLE `event_store_relation` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `saga_store` (
-  `saga_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
   `saga_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `payload` json NOT NULL,
   `created_at` timestamp(6) NOT NULL,
   `updated_at` timestamp(6) NULL DEFAULT NULL,
-  PRIMARY KEY (`saga_id`, `saga_name`)
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `saga_store_relation` (
+  `id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `saga_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  PRIMARY KEY (`id`,`saga_id`),
+  CONSTRAINT `saga_store_relation_ibfk_1` FOREIGN KEY (`id`) REFERENCES `saga_store` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

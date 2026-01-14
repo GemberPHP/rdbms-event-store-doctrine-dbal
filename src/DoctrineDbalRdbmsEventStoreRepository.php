@@ -102,7 +102,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             ->executeQuery()
             ->fetchFirstColumn();
 
-        return $row[array_key_first($row)] ?? null;
+        return $row[0] ?? null;
     }
 
     #[Override]

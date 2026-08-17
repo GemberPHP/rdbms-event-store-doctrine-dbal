@@ -43,14 +43,13 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
         $sagaStoreSchema = $this->sagaStoreTableSchema;
         $sagaStoreRelationSchema = $this->sagaStoreRelationTableSchema;
 
-        /** @var list<array{
+        /** @var array{
          *     id: string,
-         *     sagaId: string,
          *     sagaName: string,
          *     payload: string,
          *     createdAt: string,
          *     updatedAt: string|null
-         * }> $row */
+         * }|false $row */
         $row = $this->connection->createQueryBuilder()
             ->select(
                 <<<DQL
@@ -90,12 +89,16 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
                 DQL
             )
             ->from($sagaStoreRelationSchema->tableName, 'ssr')
+            ->where(sprintf('ssr.%s = :id', $sagaStoreRelationSchema->idFieldName))
+            ->setParameter('id', $row['id'])
             ->executeQuery()
             ->fetchAllAssociative();
 
-        /** @var list<SagaRow> $payload */
+        /** @var SagaRow $payload */
         $payload = $row;
-        $payload['sagaIds'] = array_map(fn($sagaIdRow) => $sagaIdRow['sagaId'], $sagaIdRows);
+        /** @var list<string> $sagaIdsFromRow */
+        $sagaIdsFromRow = array_map(fn($sagaIdRow) => $sagaIdRow['sagaId'], $sagaIdRows);
+        $payload['sagaIds'] = $sagaIdsFromRow;
 
         return $this->sagaFactory->createFromRow($payload);
     }

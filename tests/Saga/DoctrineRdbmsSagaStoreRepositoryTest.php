@@ -73,6 +73,41 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
     }
 
     #[Test]
+    public function itShouldGetSagaWithCorrectSagaIdsWhenMultipleSagasExist(): void
+    {
+        $this->identityGenerator->ids[] = '01K7Q083CX4T7Z0NT5CKEX8NEJ';
+        $this->identityGenerator->ids[] = '01K7Q083CX4T7Z0NT5CKEX8NEK';
+
+        $this->repository->save(
+            'some.saga',
+            '{"some":"data"}',
+            new DateTimeImmutable('2025-10-10 12:00:34'),
+            '01K76GDQ5RT71G7HQVNR264KD4',
+            '01K7Q033P5174AXA054FFAHW2F',
+        );
+
+        $this->repository->save(
+            'other.saga',
+            '{"other":"data"}',
+            new DateTimeImmutable('2025-10-10 13:00:00'),
+            '01K76GDQ5RT71G7HQVNR264KD5',
+            '01K7Q033P5174AXA054FFAHW2G',
+        );
+
+        $saga = $this->repository->get('some.saga', '01K76GDQ5RT71G7HQVNR264KD4');
+
+        self::assertSame('01K7Q083CX4T7Z0NT5CKEX8NEJ', $saga->id);
+        self::assertSame('some.saga', $saga->sagaName);
+        self::assertSame(['01K76GDQ5RT71G7HQVNR264KD4', '01K7Q033P5174AXA054FFAHW2F'], $saga->sagaIds);
+
+        $otherSaga = $this->repository->get('other.saga', '01K76GDQ5RT71G7HQVNR264KD5');
+
+        self::assertSame('01K7Q083CX4T7Z0NT5CKEX8NEK', $otherSaga->id);
+        self::assertSame('other.saga', $otherSaga->sagaName);
+        self::assertSame(['01K76GDQ5RT71G7HQVNR264KD5', '01K7Q033P5174AXA054FFAHW2G'], $otherSaga->sagaIds);
+    }
+
+    #[Test]
     public function itShouldSaveExistingSaga(): void
     {
         $this->identityGenerator->ids[] = '01K7Q083CX4T7Z0NT5CKEX8NEJ';

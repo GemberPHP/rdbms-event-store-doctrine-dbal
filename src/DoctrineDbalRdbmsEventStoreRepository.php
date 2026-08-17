@@ -6,11 +6,14 @@ namespace Gember\RdbmsEventStoreDoctrineDbal;
 
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Platforms\Exception\NotSupported;
+use Gember\DependencyContracts\EventStore\Rdbms\OptimisticLockException;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEventStoreRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\EventStoreRelationTableSchema;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\EventStoreTableSchema;
 use Override;
+use Stringable;
 use Throwable;
 
 /**
@@ -79,34 +82,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     }
 
     #[Override]
-    public function getLastEventIdPersisted(array $domainTags, array $eventNames): ?string
-    {
-        $eventStoreSchema = $this->eventStoreTableSchema;
-        $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
-
-        /** @var list<string> $row */
-        $row = $this->connection->createQueryBuilder()
-            ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
-            ->from($eventStoreSchema->tableName, 'es')
-            ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
-                'es.%s = esr.%s',
-                $eventStoreSchema->eventIdFieldName,
-                $eventStoreRelationSchema->eventIdFieldName,
-            ))
-            ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
-            ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
-            ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
-            ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
-            ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
-            ->setMaxResults(1)
-            ->executeQuery()
-            ->fetchFirstColumn();
-
-        return $row[0] ?? null;
-    }
-
-    #[Override]
-    public function saveEvents(array $events): void
+    public function saveEvents(array $domainTags, array $eventNames, ?string $lastEventId, array $events): void
     {
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
@@ -114,6 +90,8 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         $this->connection->beginTransaction();
 
         try {
+            $this->guardOptimisticLock($domainTags, $eventNames, $lastEventId);
+
             foreach ($events as $event) {
                 $this->connection->createQueryBuilder()
                     ->insert($eventStoreSchema->tableName)
@@ -149,6 +127,69 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             $this->connection->rollBack();
 
             throw $exception;
+        }
+    }
+
+    /**
+     * @param list<string|Stringable> $domainTags
+     * @param list<string> $eventNames
+     *
+     * @throws OptimisticLockException
+     */
+    private function guardOptimisticLock(array $domainTags, array $eventNames, ?string $lastEventId): void
+    {
+        $eventStoreSchema = $this->eventStoreTableSchema;
+        $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
+
+        try {
+            /** @var list<string> $row */
+            $row = $this->connection->createQueryBuilder()
+                ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
+                ->from($eventStoreSchema->tableName, 'es')
+                ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
+                    'es.%s = esr.%s',
+                    $eventStoreSchema->eventIdFieldName,
+                    $eventStoreRelationSchema->eventIdFieldName,
+                ))
+                ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
+                ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
+                ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
+                ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
+                ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
+                ->setMaxResults(1)
+                ->forUpdate()
+                ->executeQuery()
+                ->fetchFirstColumn();
+        } catch (NotSupported) {
+            // Platform does not support FOR UPDATE (e.g. SQLite).
+            // SQLite serializes writes implicitly, so this is safe.
+            /** @var list<string> $row */
+            $row = $this->connection->createQueryBuilder()
+                ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
+                ->from($eventStoreSchema->tableName, 'es')
+                ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
+                    'es.%s = esr.%s',
+                    $eventStoreSchema->eventIdFieldName,
+                    $eventStoreRelationSchema->eventIdFieldName,
+                ))
+                ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
+                ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
+                ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
+                ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
+                ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
+                ->setMaxResults(1)
+                ->executeQuery()
+                ->fetchFirstColumn();
+        }
+
+        $lastEventIdPersisted = $row[0] ?? null;
+
+        if ($lastEventIdPersisted === null) {
+            return;
+        }
+
+        if ($lastEventIdPersisted !== $lastEventId) {
+            throw OptimisticLockException::create();
         }
     }
 }

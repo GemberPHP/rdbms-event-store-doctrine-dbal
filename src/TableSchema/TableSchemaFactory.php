@@ -37,4 +37,14 @@ final readonly class TableSchemaFactory
             $domainTagFieldName,
         );
     }
+
+    public static function createDefaultEventStoreLock(
+        string $tableName = 'event_store_lock',
+        string $boundaryHashFieldName = 'boundary_hash',
+    ): EventStoreLockTableSchema {
+        return new EventStoreLockTableSchema(
+            $tableName,
+            $boundaryHashFieldName,
+        );
+    }
 }

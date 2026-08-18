@@ -6,6 +6,7 @@ $finder = (new PhpCsFixer\Finder())
     ->in(['src', 'tests']);
 
 return (new PhpCsFixer\Config())
+    ->setUnsupportedPhpVersionAllowed(true)
     ->setCacheFile('var/.php-cs-fixer.cache')
     ->setParallelConfig(PhpCsFixer\Runner\Parallel\ParallelConfigFactory::detect())
     ->setRiskyAllowed(true)

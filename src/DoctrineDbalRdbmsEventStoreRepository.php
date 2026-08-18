@@ -66,6 +66,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
             ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'asc')
+            ->addOrderBy(sprintf('es.%s', $eventStoreSchema->eventIdFieldName), 'asc')
             ->executeQuery()
             ->fetchAllAssociative();
 
@@ -202,6 +203,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
             ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
+            ->addOrderBy(sprintf('es.%s', $eventStoreSchema->eventIdFieldName), 'desc')
             ->setMaxResults(1)
             ->executeQuery()
             ->fetchFirstColumn();

@@ -6,10 +6,12 @@ namespace Gember\RdbmsEventStoreDoctrineDbal;
 
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\DBAL\Platforms\Exception\NotSupported;
 use Gember\DependencyContracts\EventStore\Rdbms\OptimisticLockException;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEventStoreRepository;
+use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\EventStoreLockTableSchema;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\EventStoreRelationTableSchema;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\EventStoreTableSchema;
 use Override;
@@ -32,6 +34,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         private Connection $connection,
         private EventStoreTableSchema $eventStoreTableSchema,
         private EventStoreRelationTableSchema $eventStoreRelationTableSchema,
+        private EventStoreLockTableSchema $eventStoreLockTableSchema,
         private DoctrineDbalRdbmsEventFactory $rdbmsEventFactory,
     ) {}
 
@@ -90,6 +93,17 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         $this->connection->beginTransaction();
 
         try {
+            /*
+             * Acquire an exclusive row lock on the consistency boundary, ensuring concurrent
+             * writers for the same boundary are serialized — one blocks until the other commits.
+             */
+            $this->acquireBoundaryLock($domainTags, $eventNames);
+
+            /*
+             * With the lock held, safely check whether the last persisted event still matches
+             * what the caller expects. If another writer committed new events in between,
+             * the mismatch is detected and an OptimisticLockException is thrown.
+             */
             $this->guardOptimisticLock($domainTags, $eventNames, $lastEventId);
 
             foreach ($events as $event) {
@@ -133,6 +147,39 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     /**
      * @param list<string|Stringable> $domainTags
      * @param list<string> $eventNames
+     */
+    private function acquireBoundaryLock(array $domainTags, array $eventNames): void
+    {
+        $lockSchema = $this->eventStoreLockTableSchema;
+        $hash = $this->buildBoundaryHash($domainTags, $eventNames);
+
+        try {
+            $this->connection->createQueryBuilder()
+                ->insert($lockSchema->tableName)
+                ->setValue($lockSchema->boundaryHashFieldName, ':hash')
+                ->setParameter('hash', $hash)
+                ->executeStatement();
+        } catch (UniqueConstraintViolationException) {
+            // Row already exists, proceed to lock it
+        }
+
+        try {
+            $this->connection->createQueryBuilder()
+                ->select($lockSchema->boundaryHashFieldName)
+                ->from($lockSchema->tableName)
+                ->where(sprintf('%s = :hash', $lockSchema->boundaryHashFieldName))
+                ->setParameter('hash', $hash)
+                ->forUpdate()
+                ->executeQuery();
+        } catch (NotSupported) {
+            // Platform does not support FOR UPDATE (e.g. SQLite).
+            // SQLite serializes writes implicitly, so this is safe.
+        }
+    }
+
+    /**
+     * @param list<string|Stringable> $domainTags
+     * @param list<string> $eventNames
      *
      * @throws OptimisticLockException
      */
@@ -141,46 +188,23 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
 
-        try {
-            /** @var list<string> $row */
-            $row = $this->connection->createQueryBuilder()
-                ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
-                ->from($eventStoreSchema->tableName, 'es')
-                ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
-                    'es.%s = esr.%s',
-                    $eventStoreSchema->eventIdFieldName,
-                    $eventStoreRelationSchema->eventIdFieldName,
-                ))
-                ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
-                ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
-                ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
-                ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
-                ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
-                ->setMaxResults(1)
-                ->forUpdate()
-                ->executeQuery()
-                ->fetchFirstColumn();
-        } catch (NotSupported) {
-            // Platform does not support FOR UPDATE (e.g. SQLite).
-            // SQLite serializes writes implicitly, so this is safe.
-            /** @var list<string> $row */
-            $row = $this->connection->createQueryBuilder()
-                ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
-                ->from($eventStoreSchema->tableName, 'es')
-                ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
-                    'es.%s = esr.%s',
-                    $eventStoreSchema->eventIdFieldName,
-                    $eventStoreRelationSchema->eventIdFieldName,
-                ))
-                ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
-                ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
-                ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
-                ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
-                ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
-                ->setMaxResults(1)
-                ->executeQuery()
-                ->fetchFirstColumn();
-        }
+        /** @var list<string> $row */
+        $row = $this->connection->createQueryBuilder()
+            ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
+            ->from($eventStoreSchema->tableName, 'es')
+            ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
+                'es.%s = esr.%s',
+                $eventStoreSchema->eventIdFieldName,
+                $eventStoreRelationSchema->eventIdFieldName,
+            ))
+            ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
+            ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
+            ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
+            ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
+            ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchFirstColumn();
 
         $lastEventIdPersisted = $row[0] ?? null;
 
@@ -191,5 +215,18 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         if ($lastEventIdPersisted !== $lastEventId) {
             throw OptimisticLockException::create();
         }
+    }
+
+    /**
+     * @param list<string|Stringable> $domainTags
+     * @param list<string> $eventNames
+     */
+    private function buildBoundaryHash(array $domainTags, array $eventNames): string
+    {
+        $tags = array_map(strval(...), $domainTags);
+        sort($tags);
+        sort($eventNames);
+
+        return hash('sha256', implode("\0", [...$tags, "\1", ...$eventNames]));
     }
 }

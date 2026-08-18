@@ -11,6 +11,10 @@ CREATE TABLE `event_store_relation` (
   `domain_tag` varchar(50) NOT NULL
 );
 
+CREATE TABLE `event_store_lock` (
+  `boundary_hash` char(64) NOT NULL PRIMARY KEY
+);
+
 CREATE TABLE `saga_store` (
   `id` varchar(50),
   `saga_name` varchar(255),

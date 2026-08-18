@@ -8,7 +8,7 @@ CREATE TABLE `event_store` (
 
 CREATE TABLE `event_store_relation` (
   `event_id` varchar(50) NOT NULL,
-  `domain_tag` varchar(50) NOT NULL
+  `domain_tag` varchar(100) NOT NULL
 );
 
 CREATE TABLE `event_store_lock` (

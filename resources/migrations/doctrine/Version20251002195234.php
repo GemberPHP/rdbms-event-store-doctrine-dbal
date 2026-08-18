@@ -28,6 +28,7 @@ final class Version20251002195234 extends AbstractMigration
               `id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
               `saga_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
               PRIMARY KEY (`id`,`saga_id`),
+              KEY `saga_id` (`saga_id`),
               CONSTRAINT `saga_store_relation_ibfk_1` FOREIGN KEY (`id`) REFERENCES `saga_store` (`id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             SQL

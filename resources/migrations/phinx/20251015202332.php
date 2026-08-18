@@ -11,6 +11,7 @@ final class V20251015202332 extends AbstractMigration
         $this->table('saga_store_relation', ['id' => false, 'primary_key' => ['id', 'saga_id']])
             ->addColumn('id', 'string', ['limit' => 50, 'null' => false])
             ->addColumn('saga_id', 'string', ['limit' => 50, 'null' => false])
+            ->addIndex('saga_id')
             ->addForeignKey('id', 'saga_store', 'id')
             ->create();
     }

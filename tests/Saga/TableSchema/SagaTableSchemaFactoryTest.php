@@ -75,4 +75,25 @@ final class SagaTableSchemaFactoryTest extends TestCase
         self::assertSame('custom_id', $schema->idFieldName);
         self::assertSame('custom_saga_id', $schema->sagaIdFieldName);
     }
+
+    #[Test]
+    public function itShouldCreateDefaultSagaStoreLockTableSchema(): void
+    {
+        $schema = SagaTableSchemaFactory::createDefaultSagaStoreLock();
+
+        self::assertSame('saga_store_lock', $schema->tableName);
+        self::assertSame('boundary_hash', $schema->boundaryHashFieldName);
+    }
+
+    #[Test]
+    public function itShouldCreateCustomSagaStoreLockTableSchema(): void
+    {
+        $schema = SagaTableSchemaFactory::createDefaultSagaStoreLock(
+            'custom_saga_store_lock',
+            'custom_boundary_hash',
+        );
+
+        self::assertSame('custom_saga_store_lock', $schema->tableName);
+        self::assertSame('custom_boundary_hash', $schema->boundaryHashFieldName);
+    }
 }

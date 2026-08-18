@@ -112,8 +112,8 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
             new RdbmsEvent(
                 '63129dc3-4a27-4242-a8bc-6f79636a6fa9',
                 [
-                    '0c1ff409-a4be-42f1-90dd-5d7b0130a426',
                     '6ae07469-0f43-4f33-979b-c783b6824ce0',
+                    '0c1ff409-a4be-42f1-90dd-5d7b0130a426',
                 ],
                 'event_name',
                 '{"data":"some"}',

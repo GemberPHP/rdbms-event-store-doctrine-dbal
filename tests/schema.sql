@@ -27,3 +27,7 @@ CREATE TABLE `saga_store_relation` (
   `id` varchar(50) NOT NULL,
   `saga_id` varchar(50) NOT NULL
 );
+
+CREATE TABLE `saga_store_lock` (
+  `boundary_hash` char(64) NOT NULL PRIMARY KEY
+);

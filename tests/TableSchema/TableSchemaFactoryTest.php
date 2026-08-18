@@ -72,4 +72,25 @@ final class TableSchemaFactoryTest extends TestCase
         self::assertSame('custom_event_id', $schema->eventIdFieldName);
         self::assertSame('custom_domain_tag', $schema->domainTagFieldName);
     }
+
+    #[Test]
+    public function itShouldCreateDefaultEventStoreLockTableSchema(): void
+    {
+        $schema = TableSchemaFactory::createDefaultEventStoreLock();
+
+        self::assertSame('event_store_lock', $schema->tableName);
+        self::assertSame('boundary_hash', $schema->boundaryHashFieldName);
+    }
+
+    #[Test]
+    public function itShouldCreateCustomEventStoreLockTableSchema(): void
+    {
+        $schema = TableSchemaFactory::createDefaultEventStoreLock(
+            'custom_event_store_lock',
+            'custom_boundary_hash',
+        );
+
+        self::assertSame('custom_event_store_lock', $schema->tableName);
+        self::assertSame('custom_boundary_hash', $schema->boundaryHashFieldName);
+    }
 }

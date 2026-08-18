@@ -39,4 +39,14 @@ final readonly class SagaTableSchemaFactory
             $sagaIdFieldName,
         );
     }
+
+    public static function createDefaultSagaStoreLock(
+        string $tableName = 'saga_store_lock',
+        string $boundaryHashFieldName = 'boundary_hash',
+    ): SagaStoreLockTableSchema {
+        return new SagaStoreLockTableSchema(
+            $tableName,
+            $boundaryHashFieldName,
+        );
+    }
 }

@@ -35,3 +35,15 @@ CREATE TABLE `saga_store_relation` (
 CREATE TABLE `saga_store_lock` (
   `boundary_hash` char(64) NOT NULL PRIMARY KEY
 );
+
+CREATE TABLE `outbox` (
+  `id` varchar(50) NOT NULL,
+  `message_type` varchar(20) NOT NULL,
+  `message_name` varchar(255) NOT NULL,
+  `payload` json NOT NULL,
+  `created_at` timestamp(6) NOT NULL,
+  `retry_count` int NOT NULL DEFAULT 0,
+  `processed_at` timestamp(6) NULL DEFAULT NULL,
+  `dead_lettered_at` timestamp(6) NULL DEFAULT NULL,
+  PRIMARY KEY (`id`)
+);

@@ -73,15 +73,15 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                 'anchor.%s = :afterEventId',
                 $eventStoreSchema->eventIdFieldName,
             ))
-            ->andWhere(sprintf(
-                '(es.%s > anchor.%s OR (es.%s = anchor.%s AND es.%s > :afterEventId))',
-                $eventStoreSchema->appliedAtFieldName,
-                $eventStoreSchema->appliedAtFieldName,
-                $eventStoreSchema->appliedAtFieldName,
-                $eventStoreSchema->appliedAtFieldName,
-                $eventStoreSchema->eventIdFieldName,
-            ))
-            ->setParameter('afterEventId', $afterEventId);
+                ->andWhere(sprintf(
+                    '(es.%s > anchor.%s OR (es.%s = anchor.%s AND es.%s > :afterEventId))',
+                    $eventStoreSchema->appliedAtFieldName,
+                    $eventStoreSchema->appliedAtFieldName,
+                    $eventStoreSchema->appliedAtFieldName,
+                    $eventStoreSchema->appliedAtFieldName,
+                    $eventStoreSchema->eventIdFieldName,
+                ))
+                ->setParameter('afterEventId', $afterEventId);
         }
 
         $rows = $qb->executeQuery()->fetchAllAssociative();

@@ -36,6 +36,16 @@ CREATE TABLE `saga_store_lock` (
   `boundary_hash` char(64) NOT NULL PRIMARY KEY
 );
 
+CREATE TABLE `snapshot_store` (
+  `boundary_hash` char(64) NOT NULL,
+  `last_event_id` varchar(50) NOT NULL,
+  `event_count` int NOT NULL,
+  `payload` text NOT NULL,
+  `created_at` timestamp(6) NOT NULL,
+  `updated_at` timestamp(6) NULL DEFAULT NULL,
+  PRIMARY KEY (`boundary_hash`)
+);
+
 CREATE TABLE `outbox` (
   `id` varchar(50) NOT NULL,
   `message_type` varchar(20) NOT NULL,

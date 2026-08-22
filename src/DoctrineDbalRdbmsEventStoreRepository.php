@@ -39,12 +39,12 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     ) {}
 
     #[Override]
-    public function getEvents(array $domainTags, array $eventNames): array
+    public function getEvents(array $domainTags, array $eventNames, ?string $afterEventId = null): array
     {
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
 
-        $rows = $this->connection->createQueryBuilder()
+        $qb = $this->connection->createQueryBuilder()
             ->select(
                 <<<DQL
                 es.{$eventStoreSchema->eventIdFieldName} as eventId,
@@ -66,9 +66,25 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
             ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
             ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'asc')
-            ->addOrderBy(sprintf('es.%s', $eventStoreSchema->eventIdFieldName), 'asc')
-            ->executeQuery()
-            ->fetchAllAssociative();
+            ->addOrderBy(sprintf('es.%s', $eventStoreSchema->eventIdFieldName), 'asc');
+
+        if ($afterEventId !== null) {
+            $qb->join('es', $eventStoreSchema->tableName, 'anchor', sprintf(
+                'anchor.%s = :afterEventId',
+                $eventStoreSchema->eventIdFieldName,
+            ))
+            ->andWhere(sprintf(
+                '(es.%s > anchor.%s OR (es.%s = anchor.%s AND es.%s > :afterEventId))',
+                $eventStoreSchema->appliedAtFieldName,
+                $eventStoreSchema->appliedAtFieldName,
+                $eventStoreSchema->appliedAtFieldName,
+                $eventStoreSchema->appliedAtFieldName,
+                $eventStoreSchema->eventIdFieldName,
+            ))
+            ->setParameter('afterEventId', $afterEventId);
+        }
+
+        $rows = $qb->executeQuery()->fetchAllAssociative();
 
         /** @var array<string, RdbmsEvent> $events */
         $events = [];

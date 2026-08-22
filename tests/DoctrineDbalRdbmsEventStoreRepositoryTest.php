@@ -535,6 +535,36 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
     }
 
     #[Test]
+    public function itShouldGetEventsAfterEventId(): void
+    {
+        $events = $this->repository->getEvents(
+            [
+                '0c1ff409-a4be-42f1-90dd-5d7b0130a426',
+                '6ae07469-0f43-4f33-979b-c783b6824ce0',
+            ],
+            [
+                'event_name',
+                'event_name_2',
+            ],
+            '7ac51abe-9176-4794-8246-24b75c2ba914',
+        );
+
+        self::assertEquals([
+            new RdbmsEvent(
+                '63129dc3-4a27-4242-a8bc-6f79636a6fa9',
+                [
+                    '6ae07469-0f43-4f33-979b-c783b6824ce0',
+                    '0c1ff409-a4be-42f1-90dd-5d7b0130a426',
+                ],
+                'event_name',
+                '{"data":"some"}',
+                ['metadata' => 'some'],
+                new DateTimeImmutable('2024-12-06 12:05:04.456344'),
+            ),
+        ], $events);
+    }
+
+    #[Test]
     public function itShouldNotAffectDifferentBoundaryWhenOptimisticLockFailsOnAnother(): void
     {
         // Save to boundary A

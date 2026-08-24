@@ -6,7 +6,6 @@ namespace Gember\RdbmsEventStoreDoctrineDbal\Snapshot;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Gember\DependencyContracts\EventStore\Snapshot\RdbmsSnapshot;
 use Gember\DependencyContracts\EventStore\Snapshot\RdbmsSnapshotStoreRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\Snapshot\TableSchema\SnapshotStoreTableSchema;
@@ -27,6 +26,7 @@ final readonly class DoctrineDbalRdbmsSnapshotStoreRepository implements RdbmsSn
         $hash = $this->buildBoundaryHash($domainTags, $eventNames);
 
         /** @var array{
+         *     id: string,
          *     lastEventId: string,
          *     eventCount: string,
          *     payload: string,
@@ -34,6 +34,7 @@ final readonly class DoctrineDbalRdbmsSnapshotStoreRepository implements RdbmsSn
          * }|false $row */
         $row = $this->connection->createQueryBuilder()
             ->select(
+                sprintf('%s as id', $schema->idFieldName),
                 sprintf('%s as lastEventId', $schema->lastEventIdFieldName),
                 sprintf('%s as eventCount', $schema->eventCountFieldName),
                 sprintf('%s as payload', $schema->payloadFieldName),
@@ -42,6 +43,7 @@ final readonly class DoctrineDbalRdbmsSnapshotStoreRepository implements RdbmsSn
             ->from($schema->tableName)
             ->where(sprintf('%s = :hash', $schema->boundaryHashFieldName))
             ->setParameter('hash', $hash)
+            ->orderBy($schema->eventCountFieldName, 'DESC')
             ->setMaxResults(1)
             ->executeQuery()
             ->fetchAssociative();
@@ -51,6 +53,7 @@ final readonly class DoctrineDbalRdbmsSnapshotStoreRepository implements RdbmsSn
         }
 
         return new RdbmsSnapshot(
+            $row['id'],
             array_map(strval(...), $domainTags),
             $eventNames,
             $row['lastEventId'],
@@ -65,39 +68,24 @@ final readonly class DoctrineDbalRdbmsSnapshotStoreRepository implements RdbmsSn
     {
         $schema = $this->snapshotStoreTableSchema;
         $hash = $this->buildBoundaryHash($snapshot->domainTags, $snapshot->eventNames);
-        $now = $snapshot->createdAt;
 
-        try {
-            $this->connection->createQueryBuilder()
-                ->insert($schema->tableName)
-                ->setValue($schema->boundaryHashFieldName, ':hash')
-                ->setValue($schema->lastEventIdFieldName, ':lastEventId')
-                ->setValue($schema->eventCountFieldName, ':eventCount')
-                ->setValue($schema->payloadFieldName, ':payload')
-                ->setValue($schema->createdAtFieldName, ':createdAt')
-                ->setParameters([
-                    'hash' => $hash,
-                    'lastEventId' => $snapshot->lastEventId,
-                    'eventCount' => $snapshot->eventCount,
-                    'payload' => $snapshot->payload,
-                    'createdAt' => $now->format($schema->createdAtFieldFormat),
-                ])
-                ->executeStatement();
-        } catch (UniqueConstraintViolationException) {
-            $this->connection->createQueryBuilder()
-                ->update($schema->tableName)
-                ->where(sprintf('%s = :hash', $schema->boundaryHashFieldName))
-                ->set($schema->lastEventIdFieldName, ':lastEventId')
-                ->set($schema->eventCountFieldName, ':eventCount')
-                ->set($schema->payloadFieldName, ':payload')
-                ->set($schema->updatedAtFieldName, ':updatedAt')
-                ->setParameter('hash', $hash)
-                ->setParameter('lastEventId', $snapshot->lastEventId)
-                ->setParameter('eventCount', $snapshot->eventCount)
-                ->setParameter('payload', $snapshot->payload)
-                ->setParameter('updatedAt', $now->format($schema->updatedAtFieldFormat))
-                ->executeStatement();
-        }
+        $this->connection->createQueryBuilder()
+            ->insert($schema->tableName)
+            ->setValue($schema->idFieldName, ':id')
+            ->setValue($schema->boundaryHashFieldName, ':hash')
+            ->setValue($schema->lastEventIdFieldName, ':lastEventId')
+            ->setValue($schema->eventCountFieldName, ':eventCount')
+            ->setValue($schema->payloadFieldName, ':payload')
+            ->setValue($schema->createdAtFieldName, ':createdAt')
+            ->setParameters([
+                'id' => $snapshot->id,
+                'hash' => $hash,
+                'lastEventId' => $snapshot->lastEventId,
+                'eventCount' => $snapshot->eventCount,
+                'payload' => $snapshot->payload,
+                'createdAt' => $snapshot->createdAt->format($schema->createdAtFieldFormat),
+            ])
+            ->executeStatement();
     }
 
     /**

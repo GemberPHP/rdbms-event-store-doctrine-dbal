@@ -19,11 +19,11 @@ final class SnapshotTableSchemaFactoryTest extends TestCase
         $schema = SnapshotTableSchemaFactory::createDefault();
 
         self::assertSame('snapshot_store', $schema->tableName);
+        self::assertSame('id', $schema->idFieldName);
         self::assertSame('boundary_hash', $schema->boundaryHashFieldName);
         self::assertSame('last_event_id', $schema->lastEventIdFieldName);
         self::assertSame('event_count', $schema->eventCountFieldName);
         self::assertSame('payload', $schema->payloadFieldName);
         self::assertSame('created_at', $schema->createdAtFieldName);
-        self::assertSame('updated_at', $schema->updatedAtFieldName);
     }
 }

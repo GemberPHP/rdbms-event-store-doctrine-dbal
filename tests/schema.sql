@@ -37,13 +37,14 @@ CREATE TABLE `saga_store_lock` (
 );
 
 CREATE TABLE `snapshot_store` (
+  `id` varchar(50) NOT NULL,
   `boundary_hash` char(64) NOT NULL,
   `last_event_id` varchar(50) NOT NULL,
   `event_count` int NOT NULL,
   `payload` text NOT NULL,
   `created_at` timestamp(6) NOT NULL,
-  `updated_at` timestamp(6) NULL DEFAULT NULL,
-  PRIMARY KEY (`boundary_hash`)
+  PRIMARY KEY (`id`),
+  UNIQUE (`boundary_hash`, `event_count`)
 );
 
 CREATE TABLE `outbox` (

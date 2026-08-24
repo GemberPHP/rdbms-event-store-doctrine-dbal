@@ -44,13 +44,14 @@ CREATE TABLE `saga_store_lock` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `snapshot_store` (
+  `id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
   `boundary_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `last_event_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
   `event_count` int NOT NULL,
   `payload` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
   `created_at` timestamp(6) NOT NULL,
-  `updated_at` timestamp(6) NULL DEFAULT NULL,
-  PRIMARY KEY (`boundary_hash`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `boundary_event_count` (`boundary_hash`, `event_count`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `outbox` (

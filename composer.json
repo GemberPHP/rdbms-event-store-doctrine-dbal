@@ -23,7 +23,7 @@
     "require": {
         "php": "^8.3",
         "doctrine/dbal": "^4.0",
-        "gember/dependency-contracts": "^0.6"
+        "gember/dependency-contracts": "^0.7"
     },
     "require-dev": {
         "captainhook/captainhook": "^5.23",

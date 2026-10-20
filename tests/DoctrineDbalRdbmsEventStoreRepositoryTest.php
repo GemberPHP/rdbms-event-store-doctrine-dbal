@@ -6,12 +6,14 @@ namespace Gember\RdbmsEventStoreDoctrineDbal\Test;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Tools\DsnParser;
 use Gember\DependencyContracts\EventStore\Rdbms\OptimisticLockException;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventStoreRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\TableSchemaFactory;
+use Gember\RdbmsEventStoreDoctrineDbal\UnsupportedPlatformException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Override;
@@ -247,9 +249,75 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
             ],
         );
 
-        $lockRows = $this->connection->fetchAllAssociative('SELECT * FROM event_store_lock');
+        self::assertContains(
+            hash('sha256', "brand-new-tag\0brand_new_event"),
+            $this->fetchLockKeys(),
+        );
+    }
 
-        self::assertNotEmpty($lockRows);
+    #[Test]
+    public function itShouldLockEveryDomainTagAndEventNamePairOfQueryAndAppendedEvents(): void
+    {
+        $lockRowsBefore = $this->fetchLockKeys();
+
+        $this->repository->saveEvents(
+            ['tag-1', 'tag-2'],
+            ['read_event_1', 'read_event_2'],
+            null,
+            [
+                new RdbmsEvent(
+                    'eee11111-1111-1111-1111-111111111111',
+                    ['tag-1', 'tag-3'],
+                    'written_event',
+                    '{"data":"written"}',
+                    [],
+                    new DateTimeImmutable('2025-01-01 00:00:00.000000'),
+                ),
+            ],
+        );
+
+        $lockRowsAfter = $this->fetchLockKeys();
+
+        $expected = array_map(fn(string $pair) => hash('sha256', $pair), [
+            // Read set: domain tags x event names of the query
+            "tag-1\0read_event_1",
+            "tag-1\0read_event_2",
+            "tag-2\0read_event_1",
+            "tag-2\0read_event_2",
+            // Write set: domain tags x event name of the appended event
+            "tag-1\0written_event",
+            "tag-3\0written_event",
+        ]);
+
+        self::assertEqualsCanonicalizing($expected, array_values(array_diff($lockRowsAfter, $lockRowsBefore)));
+    }
+
+    #[Test]
+    public function itShouldThrowForUnsupportedPlatform(): void
+    {
+        $connection = self::createStub(Connection::class);
+        $connection->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
+
+        $repository = new DoctrineDbalRdbmsEventStoreRepository(
+            $connection,
+            TableSchemaFactory::createDefaultEventStore(),
+            TableSchemaFactory::createDefaultEventStoreRelation(),
+            TableSchemaFactory::createDefaultEventStoreLock(),
+            new DoctrineDbalRdbmsEventFactory(),
+        );
+
+        self::expectException(UnsupportedPlatformException::class);
+
+        $repository->saveEvents(['tag'], ['event_name'], null, [
+            new RdbmsEvent(
+                'eee22222-2222-2222-2222-222222222222',
+                ['tag'],
+                'event_name',
+                '{}',
+                [],
+                new DateTimeImmutable('2025-01-01 00:00:00.000000'),
+            ),
+        ]);
     }
 
     #[Test]
@@ -685,5 +753,16 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->connection->rollBack();
 
         self::assertSame(0, $this->connection->getTransactionNestingLevel());
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function fetchLockKeys(): array
+    {
+        return array_values(array_filter(
+            $this->connection->fetchFirstColumn('SELECT boundary_hash FROM event_store_lock'),
+            is_string(...),
+        ));
     }
 }

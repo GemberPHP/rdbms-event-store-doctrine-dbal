@@ -6,6 +6,7 @@ namespace Gember\RdbmsEventStoreDoctrineDbal\Snapshot;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Gember\DependencyContracts\EventStore\Snapshot\RdbmsSnapshot;
 use Gember\DependencyContracts\EventStore\Snapshot\RdbmsSnapshotStoreRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\Snapshot\TableSchema\SnapshotStoreTableSchema;
@@ -69,23 +70,31 @@ final readonly class DoctrineDbalRdbmsSnapshotStoreRepository implements RdbmsSn
         $schema = $this->snapshotStoreTableSchema;
         $hash = $this->buildBoundaryHash($snapshot->domainTags, $snapshot->eventNames);
 
-        $this->connection->createQueryBuilder()
-            ->insert($schema->tableName)
-            ->setValue($schema->idFieldName, ':id')
-            ->setValue($schema->boundaryHashFieldName, ':hash')
-            ->setValue($schema->lastEventIdFieldName, ':lastEventId')
-            ->setValue($schema->eventCountFieldName, ':eventCount')
-            ->setValue($schema->payloadFieldName, ':payload')
-            ->setValue($schema->createdAtFieldName, ':createdAt')
-            ->setParameters([
-                'id' => $snapshot->id,
-                'hash' => $hash,
-                'lastEventId' => $snapshot->lastEventId,
-                'eventCount' => $snapshot->eventCount,
-                'payload' => $snapshot->payload,
-                'createdAt' => $snapshot->createdAt->format($schema->createdAtFieldFormat),
-            ])
-            ->executeStatement();
+        /*
+         * A snapshot for this boundary and event count already exists, e.g. stored concurrently by another
+         * process that loaded the same events. The event count identifies the state, so it's the same snapshot.
+         */
+        try {
+            $this->connection->createQueryBuilder()
+                ->insert($schema->tableName)
+                ->setValue($schema->idFieldName, ':id')
+                ->setValue($schema->boundaryHashFieldName, ':hash')
+                ->setValue($schema->lastEventIdFieldName, ':lastEventId')
+                ->setValue($schema->eventCountFieldName, ':eventCount')
+                ->setValue($schema->payloadFieldName, ':payload')
+                ->setValue($schema->createdAtFieldName, ':createdAt')
+                ->setParameters([
+                    'id' => $snapshot->id,
+                    'hash' => $hash,
+                    'lastEventId' => $snapshot->lastEventId,
+                    'eventCount' => $snapshot->eventCount,
+                    'payload' => $snapshot->payload,
+                    'createdAt' => $snapshot->createdAt->format($schema->createdAtFieldFormat),
+                ])
+                ->executeStatement();
+        } catch (UniqueConstraintViolationException) {
+            // Already stored
+        }
     }
 
     /**

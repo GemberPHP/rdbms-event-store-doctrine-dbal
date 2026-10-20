@@ -10,7 +10,8 @@ declare(strict_types=1);
  * boundary {course, student}, odd workers the boundary {course}, so writers both
  * overlap and share identical boundaries.
  *
- * Usage: php worker.php <workerId> <courses> <capacity> <attempts>
+ * Usage: php worker.php <workerId> <courses> <capacity> <attempts> [<startAt>]
+ * Workers wait until the <startAt> unix timestamp (float), so they start competing at the same time.
  * Prints a JSON summary to stdout.
  */
 
@@ -25,9 +26,14 @@ $dsn = MySqlTestEnvironment::getDsn() ?? throw new RuntimeException('Missing ' .
 
 /** @var list<string> $argv */
 [, $workerId, $courses, $capacity, $attempts] = array_map(intval(...), $argv);
+$startAt = (float) ($argv[5] ?? 0);
 
 $connection = MySqlTestEnvironment::createConnection($dsn);
 $repository = MySqlTestEnvironment::createRepository($connection);
+
+if ($startAt > microtime(true)) {
+    time_sleep_until($startAt);
+}
 
 $summary = ['subscribed' => 0, 'full' => 0, 'conflicts' => 0, 'deadlocks' => 0, 'lockWaitTimeouts' => 0];
 

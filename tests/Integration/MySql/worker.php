@@ -56,10 +56,8 @@ for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
             break;
         }
 
-        $lastEventId = $events === [] ? null : $events[array_key_last($events)]->eventId;
-
         try {
-            $repository->saveEvents($domainTags, ['StudentSubscribed'], $lastEventId, [
+            $repository->saveEvents($domainTags, ['StudentSubscribed'], count($events), [
                 MySqlTestEnvironment::event(
                     sprintf('%d-%d-%d', $workerId, $attempt, $retry),
                     [$course, $student],

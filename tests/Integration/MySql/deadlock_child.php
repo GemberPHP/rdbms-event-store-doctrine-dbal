@@ -24,7 +24,7 @@ $repository = MySqlTestEnvironment::createRepository($connection);
 
 $connection->beginTransaction();
 
-$repository->saveEvents(['course-1'], ['StudentSubscribed'], 'event-1', array_map(
+$repository->saveEvents(['course-1'], ['StudentSubscribed'], 1, array_map(
     fn(int $i) => MySqlTestEnvironment::event('child-' . $i, ['course-1'], 'StudentSubscribed'),
     range(1, 5),
 ));

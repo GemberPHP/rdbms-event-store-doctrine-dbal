@@ -64,15 +64,19 @@ final class MySqlTestEnvironment
     /**
      * @param list<string> $domainTags
      */
-    public static function event(string $eventId, array $domainTags, string $eventName): RdbmsEvent
-    {
+    public static function event(
+        string $eventId,
+        array $domainTags,
+        string $eventName,
+        ?DateTimeImmutable $appliedAt = null,
+    ): RdbmsEvent {
         return new RdbmsEvent(
             $eventId,
             $domainTags,
             $eventName,
             '{}',
             [],
-            new DateTimeImmutable(),
+            $appliedAt ?? new DateTimeImmutable(),
         );
     }
 }

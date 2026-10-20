@@ -6,6 +6,8 @@ namespace Gember\RdbmsEventStoreDoctrineDbal;
 
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DeadlockException;
+use Doctrine\DBAL\Exception\LockWaitTimeoutException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Gember\DependencyContracts\EventStore\Rdbms\OptimisticLockException;
@@ -113,8 +115,11 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
          * deadlock, as the database then rolls back the whole transaction including the savepoint.
          */
         $ownsTransaction = !$this->connection->isTransactionActive();
+        $lockKeys = $this->buildLockKeys($domainTags, $eventNames, $events);
 
         if ($ownsTransaction) {
+            $this->createMissingLockRows($lockKeys);
+
             $this->connection->beginTransaction();
         }
 
@@ -124,7 +129,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
              * Any concurrent writer appending an event that matches this writer's query (or vice versa)
              * shares at least one pair, so they are serialized — one blocks until the other commits.
              */
-            $this->acquireLocks($this->buildLockKeys($domainTags, $eventNames, $events));
+            $this->acquireLocks($lockKeys);
 
             /*
              * With the lock held, safely check whether the last persisted event still matches
@@ -176,6 +181,55 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             }
 
             throw $exception;
+        }
+    }
+
+    /**
+     * Commits missing lock rows upfront (MySQL/MariaDB only, outside a transaction).
+     *
+     * A lock row created inside the writer's transaction disappears again when that transaction rolls back
+     * (e.g. on an OptimisticLockException). InnoDB then turns the locks of all writers waiting on that row into
+     * gap locks, and the waiters deadlock each other when inserting it. Lock rows that already exist are only
+     * locked, never removed, so this cannot happen.
+     *
+     * This is an optimization only: acquireLocks() still creates any row missing at that point.
+     *
+     * @param list<string> $lockKeys
+     */
+    private function createMissingLockRows(array $lockKeys): void
+    {
+        if ($lockKeys === [] || !$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            return;
+        }
+
+        $lockSchema = $this->eventStoreLockTableSchema;
+
+        $existingLockKeys = $this->connection->createQueryBuilder()
+            ->select($lockSchema->boundaryHashFieldName)
+            ->from($lockSchema->tableName)
+            ->where(sprintf('%s IN (:lockKeys)', $lockSchema->boundaryHashFieldName))
+            ->setParameter('lockKeys', $lockKeys, ArrayParameterType::STRING)
+            ->executeQuery()
+            ->fetchFirstColumn();
+
+        $missingLockKeys = array_values(array_diff($lockKeys, array_filter($existingLockKeys, is_string(...))));
+
+        if ($missingLockKeys === []) {
+            return;
+        }
+
+        try {
+            $this->connection->executeStatement(
+                sprintf(
+                    'INSERT IGNORE INTO %s (%s) VALUES %s',
+                    $lockSchema->tableName,
+                    $lockSchema->boundaryHashFieldName,
+                    implode(', ', array_fill(0, count($missingLockKeys), '(?)')),
+                ),
+                $missingLockKeys,
+            );
+        } catch (DeadlockException|LockWaitTimeoutException) {
+            // Concurrent writers creating the same rows; acquireLocks() creates whatever is still missing
         }
     }
 
@@ -287,7 +341,7 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         }
 
         $lockKeys = array_values(array_unique($lockKeys));
-        sort($lockKeys);
+        sort($lockKeys, SORT_STRING);
 
         return $lockKeys;
     }

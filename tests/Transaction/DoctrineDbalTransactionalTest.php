@@ -69,4 +69,42 @@ final class DoctrineDbalTransactionalTest extends TestCase
 
         self::assertSame('result-value', $result);
     }
+
+    #[Test]
+    public function itShouldRunWithinActiveTransactionWithoutSavepoint(): void
+    {
+        $this->connection->beginTransaction();
+
+        $this->transactional->transactional(function (): void {
+            self::assertSame(1, $this->connection->getTransactionNestingLevel());
+
+            $this->connection->executeStatement("INSERT INTO test_table (id, value) VALUES (1, 'test')");
+        });
+
+        self::assertSame(1, $this->connection->getTransactionNestingLevel());
+
+        $this->connection->rollBack();
+
+        self::assertCount(0, $this->connection->fetchAllAssociative('SELECT * FROM test_table'));
+    }
+
+    #[Test]
+    public function itShouldLeaveActiveTransactionToCallerOnFailure(): void
+    {
+        $this->connection->beginTransaction();
+
+        try {
+            $this->transactional->transactional(function (): void {
+                throw new RuntimeException('something went wrong');
+            });
+        } catch (RuntimeException) {
+            // expected
+        }
+
+        self::assertSame(1, $this->connection->getTransactionNestingLevel());
+
+        $this->connection->rollBack();
+
+        self::assertSame(0, $this->connection->getTransactionNestingLevel());
+    }
 }

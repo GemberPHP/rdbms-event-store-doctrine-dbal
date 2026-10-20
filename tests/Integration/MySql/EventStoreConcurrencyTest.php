@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Gember\RdbmsEventStoreDoctrineDbal\Test\Integration\MySql;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\LockWaitTimeoutException;
 use Gember\DependencyContracts\EventStore\Rdbms\OptimisticLockException;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventStoreRepository;
+use Gember\RdbmsEventStoreDoctrineDbal\Transaction\DoctrineDbalTransactional;
 use Override;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
@@ -178,6 +180,94 @@ final class EventStoreConcurrencyTest extends TestCase
         $this->repositoryB->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 'event-1', [
             MySqlTestEnvironment::event('event-b', ['course-1'], 'StudentSubscribed'),
         ]);
+    }
+
+    #[Test]
+    public function itShouldKeepLockRowsWhenOwnedTransactionRollsBack(): void
+    {
+        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, null, [
+            MySqlTestEnvironment::event('event-1', ['course-1'], 'StudentSubscribed'),
+        ]);
+
+        try {
+            // Stale last event id, with lock rows for course-2 that don't exist yet
+            $this->repositoryA->saveEvents(['course-1', 'course-2'], self::SUBSCRIBE_EVENT_NAMES, null, [
+                MySqlTestEnvironment::event('event-2', ['course-2'], 'StudentSubscribed'),
+            ]);
+
+            self::fail('Expected OptimisticLockException');
+        } catch (OptimisticLockException) {
+        }
+
+        // Lock rows are committed upfront, so a rollback never removes rows other writers may be waiting on
+        self::assertContains(
+            hash('sha256', "course-2\0StudentSubscribed"),
+            $this->connectionA->fetchFirstColumn('SELECT boundary_hash FROM event_store_lock'),
+        );
+        self::assertSame(1, $this->countEvents());
+    }
+
+    #[Test]
+    public function itShouldLeaveOuterTransactionUsableAfterDeadlock(): void
+    {
+        $blockerKey = str_repeat('f', 64);
+        $this->connectionA->executeStatement('INSERT INTO event_store_lock (boundary_hash) VALUES (?)', [$blockerKey]);
+        $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], null, [
+            MySqlTestEnvironment::event('event-1', ['course-1'], 'StudentSubscribed'),
+        ]);
+
+        // Application transaction holding the blocker row, with the Transactional decorator inside it
+        $this->connectionA->beginTransaction();
+        $this->connectionA->fetchOne('SELECT boundary_hash FROM event_store_lock WHERE boundary_hash = ? FOR UPDATE', [$blockerKey]);
+
+        // Child locks course-1 and then waits for the blocker row
+        $child = proc_open(
+            [PHP_BINARY, __DIR__ . '/deadlock_child.php', $blockerKey],
+            [1 => ['pipe', 'w'], 2 => ['file', (string) tempnam(sys_get_temp_dir(), 'gember'), 'w']],
+            $pipes,
+        );
+        self::assertIsResource($child);
+        $this->waitForLockWait();
+
+        try {
+            // Closes the cycle: waits for course-1, held by the child
+            (new DoctrineDbalTransactional($this->connectionA))->transactional(
+                fn() => $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], 'event-1', [
+                    MySqlTestEnvironment::event('event-a', ['course-1'], 'StudentSubscribed'),
+                ]),
+            );
+
+            self::fail('Expected DeadlockException');
+        } catch (DeadlockException) {
+            self::assertSame(1, $this->connectionA->getTransactionNestingLevel());
+        }
+
+        $this->connectionA->rollBack();
+
+        self::assertSame(0, $this->connectionA->getTransactionNestingLevel());
+
+        /** @var array{1: resource} $pipes */
+        $output = (string) stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        proc_close($child);
+
+        self::assertSame('committed', $output);
+        self::assertSame(6, $this->countEvents());
+    }
+
+    private function waitForLockWait(): void
+    {
+        for ($attempt = 0; $attempt < 100; ++$attempt) {
+            $lockWaits = $this->connectionB->fetchOne('SELECT COUNT(*) FROM performance_schema.data_lock_waits');
+
+            if (is_numeric($lockWaits) && $lockWaits > 0) {
+                return;
+            }
+
+            usleep(50_000);
+        }
+
+        self::fail('Child process did not start waiting for the blocker row');
     }
 
     private function assertBlocked(callable $save): void

@@ -68,7 +68,7 @@ for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
                     sprintf('%d-%d-%d', $workerId, $attempt, $retry),
                     [$course, $student],
                     'StudentSubscribed',
-                    new DateTimeImmutable()->modify(sprintf('-%d microseconds', random_int(0, $skewMs * 1000))),
+                    (new DateTimeImmutable())->modify(sprintf('-%d microseconds', random_int(0, $skewMs * 1000))),
                 ),
             ]);
 

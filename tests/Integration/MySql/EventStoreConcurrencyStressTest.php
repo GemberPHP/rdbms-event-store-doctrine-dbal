@@ -19,12 +19,26 @@ use RuntimeException;
 final class EventStoreConcurrencyStressTest extends TestCase
 {
     private const int WORKERS = 8;
-    private const int COURSES = 3;
-    private const int CAPACITY = 15;
     private const int ATTEMPTS_PER_WORKER = 40;
 
     #[Test]
     public function itShouldNeverExceedCapacityAndNeverDeadlock(): void
+    {
+        $this->assertCapacityHoldsUnderStress(courses: 3, capacity: 15, students: 0, skewMs: 0);
+    }
+
+    /**
+     * Writers whose streams overlap via students shared across courses, with applied_at out of commit order:
+     * an event committed after a writer's load, but stamped earlier than events it loaded, must still be
+     * detected by the optimistic lock.
+     */
+    #[Test]
+    public function itShouldNeverExceedCapacityWithSharedTagsAndClockSkew(): void
+    {
+        $this->assertCapacityHoldsUnderStress(courses: 3, capacity: 5, students: 12, skewMs: 30);
+    }
+
+    private function assertCapacityHoldsUnderStress(int $courses, int $capacity, int $students, int $skewMs): void
     {
         $dsn = MySqlTestEnvironment::getDsn();
 
@@ -41,7 +55,7 @@ final class EventStoreConcurrencyStressTest extends TestCase
 
         try {
             for ($workerId = 1; $workerId <= self::WORKERS; ++$workerId) {
-                $processes[] = $this->spawnWorker($workerId, $startAt);
+                $processes[] = $this->spawnWorker([$workerId, $courses, $capacity, self::ATTEMPTS_PER_WORKER, $startAt, $students, $skewMs]);
             }
         } catch (RuntimeException $exception) {
             foreach ($processes as [$process]) {
@@ -86,13 +100,13 @@ final class EventStoreConcurrencyStressTest extends TestCase
 
         $connection->close();
 
-        self::assertCount(self::COURSES, $rows);
+        self::assertCount($courses, $rows);
 
         foreach ($rows as $row) {
             self::assertSame(
-                self::CAPACITY,
+                $capacity,
                 (int) $row['subscriptions'],
-                sprintf('Course %s has %d subscriptions, capacity is %d', $row['domain_tag'], $row['subscriptions'], self::CAPACITY),
+                sprintf('Course %s has %d subscriptions, capacity is %d', $row['domain_tag'], $row['subscriptions'], $capacity),
             );
         }
 
@@ -101,23 +115,17 @@ final class EventStoreConcurrencyStressTest extends TestCase
     }
 
     /**
+     * @param list<float|int> $arguments
+     *
      * @return array{resource, resource, string}
      */
-    private function spawnWorker(int $workerId, float $startAt): array
+    private function spawnWorker(array $arguments): array
     {
         // Stderr goes to a file: a full stderr pipe would block the worker while stdout is being read
         $stderrFile = (string) tempnam(sys_get_temp_dir(), 'gember-worker');
 
         $process = proc_open(
-            [
-                PHP_BINARY,
-                __DIR__ . '/worker.php',
-                (string) $workerId,
-                (string) self::COURSES,
-                (string) self::CAPACITY,
-                (string) self::ATTEMPTS_PER_WORKER,
-                (string) $startAt,
-            ],
+            [PHP_BINARY, __DIR__ . '/worker.php', ...array_map(strval(...), $arguments)],
             [1 => ['pipe', 'w'], 2 => ['file', $stderrFile, 'w']],
             $pipes,
         );

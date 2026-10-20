@@ -19,7 +19,7 @@ The tests in `tests/Integration/MySql` therefore run against a real MySQL server
 | Test | What it verifies |
 |------|------------------|
 | `EventStoreConcurrencyTest` (group `mysql`) | Uses two connections. Writer A saves inside an open transaction, holding its locks, and writer B then saves with a 1 second lock wait timeout. Writers with overlapping boundaries, or where one appends an event type the other reads, must block. Writers with the same tags but unrelated event types must not. It also checks that lock rows survive a rollback, and that a real deadlock inside an application transaction (with a child process, `deadlock_child.php`) leaves that transaction usable. |
-| `EventStoreConcurrencyStressTest` (group `mysql-stress`) | Spawns 8 worker processes (`worker.php`) that start at the same moment and concurrently subscribe students to courses with a fixed capacity, using both overlapping and identical boundaries. Every course must end exactly at capacity, without deadlocks or lock wait timeouts, and the workers must have run into optimistic lock conflicts. |
+| `EventStoreConcurrencyStressTest` (group `mysql-stress`) | Spawns 8 worker processes (`worker.php`) that start at the same moment and concurrently subscribe students to courses with a fixed capacity, using both overlapping and identical boundaries. Every course must end exactly at capacity, without deadlocks or lock wait timeouts, and the workers must have run into optimistic lock conflicts. A second scenario shares students across courses and stamps `applied_at` up to 30 ms in the past, so events commit out of timestamp order: the optimistic lock must still detect every conflicting event (an `applied_at`-based check fails this in about 8 of 10 runs). |
 
 ### Start MySQL
 
@@ -67,7 +67,7 @@ the top of `EventStoreConcurrencyStressTest` to adjust the load.
 ### Run the stress workers manually
 
 For a heavier or repeated load, run the workers directly. Each worker takes
-`<workerId> <courses> <capacity> <attempts>` and prints a JSON summary with the number of subscriptions,
+`<workerId> <courses> <capacity> <attempts> [<startAt> [<students> <skewMs>]]` and prints a JSON summary with the number of subscriptions,
 optimistic lock conflicts, deadlocks and lock wait timeouts. Even worker ids use the boundary
 `{course, student}`, odd ones `{course}`.
 

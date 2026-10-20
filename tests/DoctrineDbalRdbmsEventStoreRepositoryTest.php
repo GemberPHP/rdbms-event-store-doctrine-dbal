@@ -48,7 +48,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['6ae07469-0f43-4f33-979b-c783b6824ce0', '0c1ff409-a4be-42f1-90dd-5d7b0130a426'],
             ['event_name', 'event_name_2', 'event_name_3'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     '63129dc3-4a27-4242-a8bc-6f79636a6fa9',
@@ -131,7 +131,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['new-domain-tag'],
             ['new_event_name'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -151,12 +151,12 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldSaveEventsWhenLastEventIdMatches(): void
+    public function itShouldSaveEventsWhenExpectedEventCountMatches(): void
     {
         $this->repository->saveEvents(
             ['0c1ff409-a4be-42f1-90dd-5d7b0130a426', '6ae07469-0f43-4f33-979b-c783b6824ce0'],
             ['event_name', 'event_name_2'],
-            '63129dc3-4a27-4242-a8bc-6f79636a6fa9',
+            2,
             [
                 new RdbmsEvent(
                     'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
@@ -178,14 +178,14 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldThrowOptimisticLockExceptionWhenLastEventIdDoesNotMatch(): void
+    public function itShouldThrowOptimisticLockExceptionWhenExpectedEventCountDoesNotMatch(): void
     {
         self::expectException(OptimisticLockException::class);
 
         $this->repository->saveEvents(
             ['0c1ff409-a4be-42f1-90dd-5d7b0130a426', '6ae07469-0f43-4f33-979b-c783b6824ce0'],
             ['event_name', 'event_name_2'],
-            'wrong-event-id',
+            1,
             [
                 new RdbmsEvent(
                     'cccccccc-dddd-eeee-ffff-000000000000',
@@ -206,7 +206,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
             $this->repository->saveEvents(
                 ['0c1ff409-a4be-42f1-90dd-5d7b0130a426', '6ae07469-0f43-4f33-979b-c783b6824ce0'],
                 ['event_name', 'event_name_2'],
-                'wrong-event-id',
+                1,
                 [
                     new RdbmsEvent(
                         'dddddddd-eeee-ffff-0000-111111111111',
@@ -236,7 +236,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['brand-new-tag'],
             ['brand_new_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     '11111111-1111-1111-1111-111111111111',
@@ -263,7 +263,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['tag-1', 'tag-2'],
             ['read_event_1', 'read_event_2'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     'eee11111-1111-1111-1111-111111111111',
@@ -308,7 +308,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
 
         self::expectException(UnsupportedPlatformException::class);
 
-        $repository->saveEvents(['tag'], ['event_name'], null, [
+        $repository->saveEvents(['tag'], ['event_name'], 0, [
             new RdbmsEvent(
                 'eee22222-2222-2222-2222-222222222222',
                 ['tag'],
@@ -326,7 +326,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['reuse-tag'],
             ['reuse_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     '22222222-2222-2222-2222-222222222222',
@@ -344,7 +344,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['reuse-tag'],
             ['reuse_event'],
-            '22222222-2222-2222-2222-222222222222',
+            1,
             [
                 new RdbmsEvent(
                     '33333333-3333-3333-3333-333333333333',
@@ -370,7 +370,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['boundary-a'],
             ['event_a'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     '44444444-4444-4444-4444-444444444444',
@@ -386,7 +386,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['boundary-b'],
             ['event_b'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     '55555555-5555-5555-5555-555555555555',
@@ -410,7 +410,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['tag-z', 'tag-a'],
             ['order_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     '66666666-6666-6666-6666-666666666666',
@@ -429,7 +429,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['tag-a', 'tag-z'],
             ['order_event'],
-            '66666666-6666-6666-6666-666666666666',
+            1,
             [
                 new RdbmsEvent(
                     '77777777-7777-7777-7777-777777777777',
@@ -453,7 +453,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['order-tag'],
             ['event_z', 'event_a'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     '88888888-8888-8888-8888-888888888888',
@@ -472,7 +472,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['order-tag'],
             ['event_a', 'event_z'],
-            '88888888-8888-8888-8888-888888888888',
+            1,
             [
                 new RdbmsEvent(
                     '99999999-9999-9999-9999-999999999999',
@@ -491,12 +491,12 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldAllowSequentialSavesToSameBoundaryWithCorrectLastEventId(): void
+    public function itShouldAllowSequentialSavesToSameBoundaryWithCorrectEventCount(): void
     {
         $this->repository->saveEvents(
             ['sequential-tag'],
             ['sequential_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     'aaa11111-1111-1111-1111-111111111111',
@@ -512,7 +512,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['sequential-tag'],
             ['sequential_event'],
-            'aaa11111-1111-1111-1111-111111111111',
+            1,
             [
                 new RdbmsEvent(
                     'aaa22222-2222-2222-2222-222222222222',
@@ -528,7 +528,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['sequential-tag'],
             ['sequential_event'],
-            'aaa22222-2222-2222-2222-222222222222',
+            2,
             [
                 new RdbmsEvent(
                     'aaa33333-3333-3333-3333-333333333333',
@@ -547,12 +547,12 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldThrowOptimisticLockExceptionOnSecondSaveWithStaleLastEventId(): void
+    public function itShouldThrowOptimisticLockExceptionOnSecondSaveWithStaleEventCount(): void
     {
         $this->repository->saveEvents(
             ['stale-tag'],
             ['stale_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     'bbb11111-1111-1111-1111-111111111111',
@@ -565,11 +565,11 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
             ],
         );
 
-        // Second save succeeds, advancing the last event ID
+        // Second save succeeds, advancing the event count
         $this->repository->saveEvents(
             ['stale-tag'],
             ['stale_event'],
-            'bbb11111-1111-1111-1111-111111111111',
+            1,
             [
                 new RdbmsEvent(
                     'bbb22222-2222-2222-2222-222222222222',
@@ -582,13 +582,13 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
             ],
         );
 
-        // Third save uses the OLD last event ID — should fail
+        // Third save uses the OLD event count — should fail
         self::expectException(OptimisticLockException::class);
 
         $this->repository->saveEvents(
             ['stale-tag'],
             ['stale_event'],
-            'bbb11111-1111-1111-1111-111111111111',
+            1,
             [
                 new RdbmsEvent(
                     'bbb33333-3333-3333-3333-333333333333',
@@ -639,7 +639,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['isolation-a'],
             ['isolation_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     'ccc11111-1111-1111-1111-111111111111',
@@ -652,12 +652,12 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
             ],
         );
 
-        // Fail on boundary A with wrong last event ID
+        // Fail on boundary A with wrong event count
         try {
             $this->repository->saveEvents(
                 ['isolation-a'],
                 ['isolation_event'],
-                'wrong-id',
+                0,
                 [
                     new RdbmsEvent(
                         'ccc22222-2222-2222-2222-222222222222',
@@ -677,7 +677,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['isolation-b'],
             ['isolation_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     'ccc33333-3333-3333-3333-333333333333',
@@ -703,7 +703,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->repository->saveEvents(
             ['outer-tag'],
             ['outer_event'],
-            null,
+            0,
             [
                 new RdbmsEvent(
                     'ddd11111-1111-1111-1111-111111111111',
@@ -732,7 +732,7 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
             $this->repository->saveEvents(
                 ['6ae07469-0f43-4f33-979b-c783b6824ce0'],
                 ['event_name'],
-                'wrong-id',
+                0,
                 [
                     new RdbmsEvent(
                         'ddd22222-2222-2222-2222-222222222222',
@@ -753,6 +753,57 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
         $this->connection->rollBack();
 
         self::assertSame(0, $this->connection->getTransactionNestingLevel());
+    }
+
+    #[Test]
+    public function itShouldCountDistinctEventsMatchingDomainTagsAndEventNames(): void
+    {
+        // Fixture: 63129dc3 has both tags (counted once), 7ac51abe matches, d404e3c1 has another event name
+        self::assertSame(2, $this->repository->countEvents(
+            ['6ae07469-0f43-4f33-979b-c783b6824ce0', '0c1ff409-a4be-42f1-90dd-5d7b0130a426'],
+            ['event_name', 'event_name_2'],
+        ));
+        self::assertSame(0, $this->repository->countEvents(['unknown-tag'], ['event_name']));
+    }
+
+    #[Test]
+    public function itShouldDetectEventCommittedLaterWithEarlierAppliedAt(): void
+    {
+        // course-1 has one subscription
+        $this->repository->saveEvents(['course-1', 'student-0'], ['subscribed'], 0, [
+            self::subscribed('s0', ['course-1', 'student-0'], '2025-01-01 10:00:00'),
+        ]);
+
+        // Writer C loads (1 event) and stamps its event at 10:00:02, but commits late (below)
+        $expectedByC = count($this->repository->getEvents(['course-1', 'student-1'], ['subscribed']));
+
+        // Writer D (no shared lock with C) stamps its event at 10:00:03 and commits
+        $this->repository->saveEvents(['course-2', 'student-3'], ['subscribed'], 0, [
+            self::subscribed('y-d', ['course-2', 'student-3'], '2025-01-01 10:00:03'),
+        ]);
+
+        // Writer E loads s0 and y-d (via student-3)
+        $expectedByE = count($this->repository->getEvents(['course-1', 'student-3'], ['subscribed']));
+
+        // C commits its event, with an earlier applied_at than y-d
+        $this->repository->saveEvents(['course-1', 'student-1'], ['subscribed'], $expectedByC, [
+            self::subscribed('y-c', ['course-1', 'student-1'], '2025-01-01 10:00:02'),
+        ]);
+
+        // E decided without C's subscription and must be rejected
+        self::expectException(OptimisticLockException::class);
+
+        $this->repository->saveEvents(['course-1', 'student-3'], ['subscribed'], $expectedByE, [
+            self::subscribed('y-e', ['course-1', 'student-3'], '2025-01-01 10:00:04'),
+        ]);
+    }
+
+    /**
+     * @param list<string> $domainTags
+     */
+    private static function subscribed(string $eventId, array $domainTags, string $appliedAt): RdbmsEvent
+    {
+        return new RdbmsEvent($eventId, $domainTags, 'subscribed', '{}', [], new DateTimeImmutable($appliedAt));
     }
 
     /**

@@ -104,7 +104,31 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     }
 
     #[Override]
-    public function saveEvents(array $domainTags, array $eventNames, ?string $lastEventId, array $events): void
+    public function countEvents(array $domainTags, array $eventNames): int
+    {
+        $eventStoreSchema = $this->eventStoreTableSchema;
+        $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
+
+        $count = $this->connection->createQueryBuilder()
+            ->select(sprintf('COUNT(DISTINCT es.%s)', $eventStoreSchema->eventIdFieldName))
+            ->from($eventStoreSchema->tableName, 'es')
+            ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
+                'es.%s = esr.%s',
+                $eventStoreSchema->eventIdFieldName,
+                $eventStoreRelationSchema->eventIdFieldName,
+            ))
+            ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
+            ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
+            ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
+            ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
+            ->executeQuery()
+            ->fetchOne();
+
+        return is_numeric($count) ? (int) $count : 0;
+    }
+
+    #[Override]
+    public function saveEvents(array $domainTags, array $eventNames, int $expectedEventCount, array $events): void
     {
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
@@ -132,11 +156,11 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             $this->acquireLocks($lockKeys);
 
             /*
-             * With the lock held, safely check whether the last persisted event still matches
-             * what the caller expects. If another writer committed new events in between,
-             * the mismatch is detected and an OptimisticLockException is thrown.
+             * With the locks held, safely check whether the number of matching events still equals the number
+             * the caller based its decision on. Events are append-only, so any matching event committed in between
+             * changes the count (whatever its timestamp), and an OptimisticLockException is thrown.
              */
-            $this->guardOptimisticLock($domainTags, $eventNames, $lastEventId);
+            $this->guardOptimisticLock($domainTags, $eventNames, $expectedEventCount);
 
             foreach ($events as $event) {
                 $this->connection->createQueryBuilder()
@@ -279,37 +303,9 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
      *
      * @throws OptimisticLockException
      */
-    private function guardOptimisticLock(array $domainTags, array $eventNames, ?string $lastEventId): void
+    private function guardOptimisticLock(array $domainTags, array $eventNames, int $expectedEventCount): void
     {
-        $eventStoreSchema = $this->eventStoreTableSchema;
-        $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
-
-        /** @var list<string> $row */
-        $row = $this->connection->createQueryBuilder()
-            ->select(sprintf('es.%s', $eventStoreSchema->eventIdFieldName))
-            ->from($eventStoreSchema->tableName, 'es')
-            ->join('es', $eventStoreRelationSchema->tableName, 'esr', sprintf(
-                'es.%s = esr.%s',
-                $eventStoreSchema->eventIdFieldName,
-                $eventStoreRelationSchema->eventIdFieldName,
-            ))
-            ->where(sprintf('es.%s IN(:eventNames)', $eventStoreSchema->eventNameFieldName))
-            ->andWhere(sprintf('esr.%s IN(:domainTags)', $eventStoreRelationSchema->domainTagFieldName))
-            ->setParameter('eventNames', $eventNames, ArrayParameterType::STRING)
-            ->setParameter('domainTags', $domainTags, ArrayParameterType::STRING)
-            ->orderBy(sprintf('es.%s', $eventStoreSchema->appliedAtFieldName), 'desc')
-            ->addOrderBy(sprintf('es.%s', $eventStoreSchema->eventIdFieldName), 'desc')
-            ->setMaxResults(1)
-            ->executeQuery()
-            ->fetchFirstColumn();
-
-        $lastEventIdPersisted = $row[0] ?? null;
-
-        if ($lastEventIdPersisted === null) {
-            return;
-        }
-
-        if ($lastEventIdPersisted !== $lastEventId) {
+        if ($this->countEvents($domainTags, $eventNames) !== $expectedEventCount) {
             throw OptimisticLockException::create();
         }
     }

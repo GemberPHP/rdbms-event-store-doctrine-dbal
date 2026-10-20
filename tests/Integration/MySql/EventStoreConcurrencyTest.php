@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Gember\RdbmsEventStoreDoctrineDbal\Test\Integration\MySql;
 
+use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\LockWaitTimeoutException;
@@ -75,14 +76,14 @@ final class EventStoreConcurrencyTest extends TestCase
         $this->repositoryA->saveEvents(
             ['course-1', 'student-1'],
             self::SUBSCRIBE_EVENT_NAMES,
-            null,
+            0,
             [MySqlTestEnvironment::event('event-a', ['course-1', 'student-1'], 'StudentSubscribed')],
         );
 
         $this->assertBlocked(fn() => $this->repositoryB->saveEvents(
             ['course-1', 'student-2'],
             self::SUBSCRIBE_EVENT_NAMES,
-            null,
+            0,
             [MySqlTestEnvironment::event('event-b', ['course-1', 'student-2'], 'StudentSubscribed')],
         ));
 
@@ -94,7 +95,7 @@ final class EventStoreConcurrencyTest extends TestCase
         $this->repositoryB->saveEvents(
             ['course-1', 'student-2'],
             self::SUBSCRIBE_EVENT_NAMES,
-            null,
+            0,
             [MySqlTestEnvironment::event('event-b', ['course-1', 'student-2'], 'StudentSubscribed')],
         );
     }
@@ -107,7 +108,7 @@ final class EventStoreConcurrencyTest extends TestCase
         $this->repositoryA->saveEvents(
             ['course-1'],
             self::SUBSCRIBE_EVENT_NAMES,
-            null,
+            0,
             [MySqlTestEnvironment::event('event-a', ['course-1'], 'CourseCapacityChanged')],
         );
 
@@ -115,7 +116,7 @@ final class EventStoreConcurrencyTest extends TestCase
         $this->assertBlocked(fn() => $this->repositoryB->saveEvents(
             ['course-1', 'student-2'],
             ['StudentCreated'],
-            null,
+            0,
             [MySqlTestEnvironment::event('event-b', ['course-1', 'student-2'], 'StudentSubscribed')],
         ));
 
@@ -125,7 +126,7 @@ final class EventStoreConcurrencyTest extends TestCase
         $this->repositoryB->saveEvents(
             ['course-1', 'student-2'],
             ['StudentCreated'],
-            null,
+            0,
             [MySqlTestEnvironment::event('event-b', ['course-1', 'student-2'], 'StudentSubscribed')],
         );
 
@@ -136,19 +137,19 @@ final class EventStoreConcurrencyTest extends TestCase
     public function itShouldNotSerializeWritersWithSameTagsButUnrelatedEventTypes(): void
     {
         // Make sure lock rows already exist, so both the insert and the existing-row path are exercised
-        $this->repositoryA->saveEvents(['course-1'], ['CourseRenamed'], null, [
+        $this->repositoryA->saveEvents(['course-1'], ['CourseRenamed'], 0, [
             MySqlTestEnvironment::event('event-1', ['course-1'], 'CourseRenamed'),
         ]);
-        $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], null, [
+        $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], 0, [
             MySqlTestEnvironment::event('event-2', ['course-1'], 'StudentSubscribed'),
         ]);
 
         $this->connectionA->beginTransaction();
-        $this->repositoryA->saveEvents(['course-1'], ['CourseRenamed'], 'event-1', [
+        $this->repositoryA->saveEvents(['course-1'], ['CourseRenamed'], 1, [
             MySqlTestEnvironment::event('event-3', ['course-1'], 'CourseRenamed'),
         ]);
 
-        $this->repositoryB->saveEvents(['course-1'], ['StudentSubscribed'], 'event-2', [
+        $this->repositoryB->saveEvents(['course-1'], ['StudentSubscribed'], 1, [
             MySqlTestEnvironment::event('event-4', ['course-1'], 'StudentSubscribed'),
         ]);
 
@@ -160,16 +161,16 @@ final class EventStoreConcurrencyTest extends TestCase
     #[Test]
     public function itShouldSerializeWritersWithIdenticalBoundary(): void
     {
-        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, null, [
+        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 0, [
             MySqlTestEnvironment::event('event-1', ['course-1'], 'StudentSubscribed'),
         ]);
 
         $this->connectionA->beginTransaction();
-        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 'event-1', [
+        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 1, [
             MySqlTestEnvironment::event('event-a', ['course-1'], 'StudentSubscribed'),
         ]);
 
-        $this->assertBlocked(fn() => $this->repositoryB->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 'event-1', [
+        $this->assertBlocked(fn() => $this->repositoryB->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 1, [
             MySqlTestEnvironment::event('event-b', ['course-1'], 'StudentSubscribed'),
         ]));
 
@@ -177,7 +178,7 @@ final class EventStoreConcurrencyTest extends TestCase
 
         $this->expectException(OptimisticLockException::class);
 
-        $this->repositoryB->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 'event-1', [
+        $this->repositoryB->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 1, [
             MySqlTestEnvironment::event('event-b', ['course-1'], 'StudentSubscribed'),
         ]);
     }
@@ -185,13 +186,13 @@ final class EventStoreConcurrencyTest extends TestCase
     #[Test]
     public function itShouldKeepLockRowsWhenOwnedTransactionRollsBack(): void
     {
-        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, null, [
+        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 0, [
             MySqlTestEnvironment::event('event-1', ['course-1'], 'StudentSubscribed'),
         ]);
 
         try {
-            // Stale last event id, with lock rows for course-2 that don't exist yet
-            $this->repositoryA->saveEvents(['course-1', 'course-2'], self::SUBSCRIBE_EVENT_NAMES, null, [
+            // Stale event count, with lock rows for course-2 that don't exist yet
+            $this->repositoryA->saveEvents(['course-1', 'course-2'], self::SUBSCRIBE_EVENT_NAMES, 0, [
                 MySqlTestEnvironment::event('event-2', ['course-2'], 'StudentSubscribed'),
             ]);
 
@@ -212,7 +213,7 @@ final class EventStoreConcurrencyTest extends TestCase
     {
         $blockerKey = str_repeat('f', 64);
         $this->connectionA->executeStatement('INSERT INTO event_store_lock (boundary_hash) VALUES (?)', [$blockerKey]);
-        $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], null, [
+        $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], 0, [
             MySqlTestEnvironment::event('event-1', ['course-1'], 'StudentSubscribed'),
         ]);
 
@@ -232,7 +233,7 @@ final class EventStoreConcurrencyTest extends TestCase
         try {
             // Closes the cycle: waits for course-1, held by the child
             (new DoctrineDbalTransactional($this->connectionA))->transactional(
-                fn() => $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], 'event-1', [
+                fn() => $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], 1, [
                     MySqlTestEnvironment::event('event-a', ['course-1'], 'StudentSubscribed'),
                 ]),
             );
@@ -253,6 +254,38 @@ final class EventStoreConcurrencyTest extends TestCase
 
         self::assertSame('committed', $output);
         self::assertSame(6, $this->countEvents());
+    }
+
+    #[Test]
+    public function itShouldDetectEventCommittedAfterLoadWithEarlierAppliedAt(): void
+    {
+        $this->repositoryA->saveEvents(['course-1', 'student-0'], ['StudentSubscribed'], 0, [
+            MySqlTestEnvironment::event('s0', ['course-1', 'student-0'], 'StudentSubscribed', new DateTimeImmutable('2025-01-01 10:00:00')),
+        ]);
+
+        // Writer C stamped its event at 10:00:02 and is still in its transaction
+        $this->connectionA->beginTransaction();
+        $this->repositoryA->saveEvents(['course-1', 'student-1'], ['StudentSubscribed'], 1, [
+            MySqlTestEnvironment::event('y-c', ['course-1', 'student-1'], 'StudentSubscribed', new DateTimeImmutable('2025-01-01 10:00:02')),
+        ]);
+
+        // Writer D shares no lock with C, stamps 10:00:03 and commits
+        $this->repositoryB->saveEvents(['course-2', 'student-3'], ['StudentSubscribed'], 0, [
+            MySqlTestEnvironment::event('y-d', ['course-2', 'student-3'], 'StudentSubscribed', new DateTimeImmutable('2025-01-01 10:00:03')),
+        ]);
+
+        // Writer E loads s0 and y-d, not C's uncommitted event
+        $expectedByE = count($this->repositoryB->getEvents(['course-1', 'student-3'], ['StudentSubscribed']));
+        self::assertSame(2, $expectedByE);
+
+        $this->connectionA->commit();
+
+        // y-c sorts before y-d, but changed the count: E must be rejected
+        $this->expectException(OptimisticLockException::class);
+
+        $this->repositoryB->saveEvents(['course-1', 'student-3'], ['StudentSubscribed'], $expectedByE, [
+            MySqlTestEnvironment::event('y-e', ['course-1', 'student-3'], 'StudentSubscribed'),
+        ]);
     }
 
     private function waitForLockWait(): void

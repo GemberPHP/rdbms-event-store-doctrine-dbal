@@ -107,7 +107,16 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
         $eventStoreSchema = $this->eventStoreTableSchema;
         $eventStoreRelationSchema = $this->eventStoreRelationTableSchema;
 
-        $this->connection->beginTransaction();
+        /*
+         * When called inside a transaction (e.g. a transactional decorator), run within it rather than
+         * opening a savepoint: the caller owns atomicity and rollback. A savepoint would break on a
+         * deadlock, as the database then rolls back the whole transaction including the savepoint.
+         */
+        $ownsTransaction = !$this->connection->isTransactionActive();
+
+        if ($ownsTransaction) {
+            $this->connection->beginTransaction();
+        }
 
         try {
             /*
@@ -153,9 +162,17 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                 }
             }
 
-            $this->connection->commit();
+            if ($ownsTransaction) {
+                $this->connection->commit();
+            }
         } catch (Throwable $exception) {
-            $this->connection->rollBack();
+            if ($ownsTransaction) {
+                try {
+                    $this->connection->rollBack();
+                } catch (Throwable) {
+                    // Rethrow the original exception rather than masking it with the rollback failure
+                }
+            }
 
             throw $exception;
         }

@@ -35,29 +35,43 @@ final class EventStoreConcurrencyStressTest extends TestCase
         $connection = MySqlTestEnvironment::createConnection($dsn);
         MySqlTestEnvironment::resetSchema($connection);
 
+        // Start all workers at the same moment, after process start-up, so they actually compete
+        $startAt = microtime(true) + 1.0;
         $processes = [];
 
-        for ($workerId = 1; $workerId <= self::WORKERS; ++$workerId) {
-            $processes[] = $this->spawnWorker($workerId);
+        try {
+            for ($workerId = 1; $workerId <= self::WORKERS; ++$workerId) {
+                $processes[] = $this->spawnWorker($workerId, $startAt);
+            }
+        } catch (RuntimeException $exception) {
+            foreach ($processes as [$process]) {
+                proc_terminate($process);
+            }
+
+            throw $exception;
         }
 
+        $conflicts = 0;
         $deadlocks = 0;
         $lockWaitTimeouts = 0;
 
-        foreach ($processes as [$process, $stdout, $stderr]) {
+        foreach ($processes as [$process, $stdout, $stderrFile]) {
             $output = (string) stream_get_contents($stdout);
-            $errors = (string) stream_get_contents($stderr);
             fclose($stdout);
-            fclose($stderr);
             $exitCode = proc_close($process);
+            $errors = (string) file_get_contents($stderrFile);
+            unlink($stderrFile);
 
             self::assertSame(0, $exitCode, sprintf("Worker failed:\n%s\n%s", $output, $errors));
 
-            /** @var array{deadlocks: int, lockWaitTimeouts: int} $summary */
+            /** @var array{conflicts: int, deadlocks: int, lockWaitTimeouts: int} $summary */
             $summary = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
+            $conflicts += $summary['conflicts'];
             $deadlocks += $summary['deadlocks'];
             $lockWaitTimeouts += $summary['lockWaitTimeouts'];
         }
+
+        self::assertGreaterThan(0, $conflicts, 'Workers did not compete, the test proves nothing');
 
         /** @var list<array{domain_tag: string, subscriptions: int|string}> $rows */
         $rows = $connection->fetchAllAssociative(
@@ -87,10 +101,13 @@ final class EventStoreConcurrencyStressTest extends TestCase
     }
 
     /**
-     * @return array{resource, resource, resource}
+     * @return array{resource, resource, string}
      */
-    private function spawnWorker(int $workerId): array
+    private function spawnWorker(int $workerId, float $startAt): array
     {
+        // Stderr goes to a file: a full stderr pipe would block the worker while stdout is being read
+        $stderrFile = (string) tempnam(sys_get_temp_dir(), 'gember-worker');
+
         $process = proc_open(
             [
                 PHP_BINARY,
@@ -99,8 +116,9 @@ final class EventStoreConcurrencyStressTest extends TestCase
                 (string) self::COURSES,
                 (string) self::CAPACITY,
                 (string) self::ATTEMPTS_PER_WORKER,
+                (string) $startAt,
             ],
-            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            [1 => ['pipe', 'w'], 2 => ['file', $stderrFile, 'w']],
             $pipes,
         );
 
@@ -108,7 +126,7 @@ final class EventStoreConcurrencyStressTest extends TestCase
             throw new RuntimeException('Could not spawn worker process');
         }
 
-        /** @var array{1: resource, 2: resource} $pipes */
-        return [$process, $pipes[1], $pipes[2]];
+        /** @var array{1: resource} $pipes */
+        return [$process, $pipes[1], $stderrFile];
     }
 }

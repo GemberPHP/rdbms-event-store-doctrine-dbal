@@ -6,8 +6,8 @@ namespace Gember\RdbmsEventStoreDoctrineDbal;
 
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
-use Doctrine\DBAL\Platforms\Exception\NotSupported;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
+use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Gember\DependencyContracts\EventStore\Rdbms\OptimisticLockException;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEventStoreRepository;
@@ -120,10 +120,11 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
 
         try {
             /*
-             * Acquire an exclusive row lock on the consistency boundary, ensuring concurrent
-             * writers for the same boundary are serialized — one blocks until the other commits.
+             * Acquire exclusive row locks on every (domain tag, event name) pair this writer reads or writes.
+             * Any concurrent writer appending an event that matches this writer's query (or vice versa)
+             * shares at least one pair, so they are serialized — one blocks until the other commits.
              */
-            $this->acquireBoundaryLock($domainTags, $eventNames);
+            $this->acquireLocks($this->buildLockKeys($domainTags, $eventNames, $events));
 
             /*
              * With the lock held, safely check whether the last persisted event still matches
@@ -179,36 +180,43 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     }
 
     /**
-     * @param list<string|Stringable> $domainTags
-     * @param list<string> $eventNames
+     * @param list<string> $lockKeys
      */
-    private function acquireBoundaryLock(array $domainTags, array $eventNames): void
+    private function acquireLocks(array $lockKeys): void
     {
+        if ($lockKeys === []) {
+            return;
+        }
+
         $lockSchema = $this->eventStoreLockTableSchema;
-        $hash = $this->buildBoundaryHash($domainTags, $eventNames);
+        $platform = $this->connection->getDatabasePlatform();
+        $values = implode(', ', array_fill(0, count($lockKeys), '(?)'));
 
-        try {
-            $this->connection->createQueryBuilder()
-                ->insert($lockSchema->tableName)
-                ->setValue($lockSchema->boundaryHashFieldName, ':hash')
-                ->setParameter('hash', $hash)
-                ->executeStatement();
-        } catch (UniqueConstraintViolationException) {
-            // Row already exists, proceed to lock it
-        }
+        $sql = match (true) {
+            /*
+             * The upsert creates missing lock rows and takes an exclusive lock on new and existing rows in a
+             * single statement, in sorted key order. A plain INSERT hitting a duplicate key would take a shared
+             * lock first, and upgrading it to an exclusive lock deadlocks between concurrent writers.
+             */
+            $platform instanceof AbstractMySQLPlatform => sprintf(
+                'INSERT INTO %1$s (%2$s) VALUES %3$s ON DUPLICATE KEY UPDATE %2$s = %2$s',
+                $lockSchema->tableName,
+                $lockSchema->boundaryHashFieldName,
+                $values,
+            ),
+            /*
+             * SQLite serializes writers on database level, the lock rows only need to exist.
+             */
+            $platform instanceof SQLitePlatform => sprintf(
+                'INSERT OR IGNORE INTO %s (%s) VALUES %s',
+                $lockSchema->tableName,
+                $lockSchema->boundaryHashFieldName,
+                $values,
+            ),
+            default => throw UnsupportedPlatformException::create($platform),
+        };
 
-        try {
-            $this->connection->createQueryBuilder()
-                ->select($lockSchema->boundaryHashFieldName)
-                ->from($lockSchema->tableName)
-                ->where(sprintf('%s = :hash', $lockSchema->boundaryHashFieldName))
-                ->setParameter('hash', $hash)
-                ->forUpdate()
-                ->executeQuery();
-        } catch (NotSupported) {
-            // Platform does not support FOR UPDATE (e.g. SQLite).
-            // SQLite serializes writes implicitly, so this is safe.
-        }
+        $this->connection->executeStatement($sql, $lockKeys);
     }
 
     /**
@@ -253,15 +261,39 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     }
 
     /**
+     * Builds a lock key per (domain tag, event name) pair of the read set (the writer's query: domain tags
+     * x event names) and of the write set (each appended event's own domain tags x its event name).
+     *
      * @param list<string|Stringable> $domainTags
      * @param list<string> $eventNames
+     * @param list<RdbmsEvent> $events
+     *
+     * @return list<string>
      */
-    private function buildBoundaryHash(array $domainTags, array $eventNames): string
+    private function buildLockKeys(array $domainTags, array $eventNames, array $events): array
     {
-        $tags = array_map(strval(...), $domainTags);
-        sort($tags);
-        sort($eventNames);
+        $lockKeys = [];
 
-        return hash('sha256', implode("\0", [...$tags, "\1", ...$eventNames]));
+        foreach ($domainTags as $domainTag) {
+            foreach ($eventNames as $eventName) {
+                $lockKeys[] = $this->buildLockKey((string) $domainTag, $eventName);
+            }
+        }
+
+        foreach ($events as $event) {
+            foreach ($event->domainTags as $domainTag) {
+                $lockKeys[] = $this->buildLockKey($domainTag, $event->eventName);
+            }
+        }
+
+        $lockKeys = array_values(array_unique($lockKeys));
+        sort($lockKeys);
+
+        return $lockKeys;
+    }
+
+    private function buildLockKey(string $domainTag, string $eventName): string
+    {
+        return hash('sha256', $domainTag . "\0" . $eventName);
     }
 }

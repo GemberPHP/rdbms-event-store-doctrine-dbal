@@ -626,4 +626,64 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
 
         self::assertCount(1, $eventsB);
     }
+
+    #[Test]
+    public function itShouldRunWithinOuterTransactionWithoutCommittingIt(): void
+    {
+        $this->connection->beginTransaction();
+
+        $this->repository->saveEvents(
+            ['outer-tag'],
+            ['outer_event'],
+            null,
+            [
+                new RdbmsEvent(
+                    'ddd11111-1111-1111-1111-111111111111',
+                    ['outer-tag'],
+                    'outer_event',
+                    '{"data":"outer"}',
+                    [],
+                    new DateTimeImmutable('2025-01-01 00:00:00.000000'),
+                ),
+            ],
+        );
+
+        self::assertSame(1, $this->connection->getTransactionNestingLevel());
+
+        $this->connection->rollBack();
+
+        self::assertSame([], $this->repository->getEvents(['outer-tag'], ['outer_event']));
+    }
+
+    #[Test]
+    public function itShouldLeaveOuterTransactionToCallerWhenOptimisticLockFails(): void
+    {
+        $this->connection->beginTransaction();
+
+        try {
+            $this->repository->saveEvents(
+                ['6ae07469-0f43-4f33-979b-c783b6824ce0'],
+                ['event_name'],
+                'wrong-id',
+                [
+                    new RdbmsEvent(
+                        'ddd22222-2222-2222-2222-222222222222',
+                        ['6ae07469-0f43-4f33-979b-c783b6824ce0'],
+                        'event_name',
+                        '{"data":"stale"}',
+                        [],
+                        new DateTimeImmutable('2025-01-01 00:00:00.000000'),
+                    ),
+                ],
+            );
+
+            self::fail('Expected OptimisticLockException');
+        } catch (OptimisticLockException) {
+            self::assertSame(1, $this->connection->getTransactionNestingLevel());
+        }
+
+        $this->connection->rollBack();
+
+        self::assertSame(0, $this->connection->getTransactionNestingLevel());
+    }
 }

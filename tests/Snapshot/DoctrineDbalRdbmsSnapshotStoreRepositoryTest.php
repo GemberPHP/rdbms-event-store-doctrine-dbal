@@ -178,7 +178,7 @@ final class DoctrineDbalRdbmsSnapshotStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldThrowOnDuplicateBoundaryHashAndEventCount(): void
+    public function itShouldKeepExistingSnapshotOnDuplicateBoundaryHashAndEventCount(): void
     {
         $snapshot1 = new RdbmsSnapshot(
             'snapshot-id-1',
@@ -201,9 +201,13 @@ final class DoctrineDbalRdbmsSnapshotStoreRepositoryTest extends TestCase
         );
 
         $this->repository->save($snapshot1);
-
-        $this->expectException(\Doctrine\DBAL\Exception\UniqueConstraintViolationException::class);
-
         $this->repository->save($snapshot2);
+
+        $result = $this->repository->get(['domain-tag-1'], ['event_name_1']);
+
+        self::assertNotNull($result);
+        self::assertSame('snapshot-id-1', $result->id);
+        self::assertSame('{"state":"first"}', $result->payload);
+        self::assertCount(1, $this->connection->fetchAllAssociative('SELECT * FROM snapshot_store'));
     }
 }

@@ -139,7 +139,9 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
          * deadlock, as the database then rolls back the whole transaction including the savepoint.
          */
         $ownsTransaction = !$this->connection->isTransactionActive();
-        $lockKeys = $this->buildLockKeys($domainTags, $eventNames, $events);
+        $readLockKeys = $this->buildReadLockKeys($domainTags, $eventNames);
+        $writeLockKeys = $this->buildWriteLockKeys($events);
+        $lockKeys = $this->sortLockKeys([...$readLockKeys, ...$writeLockKeys]);
 
         if ($ownsTransaction) {
             $this->createMissingLockRows($lockKeys);
@@ -154,6 +156,13 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
              * shares at least one pair, so they are serialized — one blocks until the other commits.
              */
             $this->acquireLocks($lockKeys);
+
+            /*
+             * With the locks held, check that this transaction doesn't read from a stale snapshot. When the caller
+             * opened the transaction before loading (e.g. a transaction around the command handler), REPEATABLE READ
+             * makes the checks below read the data as it was at the load, missing events committed since then.
+             */
+            $this->guardStaleSnapshot($readLockKeys);
 
             /*
              * With the locks held, safely check whether the number of matching events still equals the number
@@ -191,6 +200,8 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
                         ->executeStatement();
                 }
             }
+
+            $this->incrementLockVersions($writeLockKeys);
 
             if ($ownsTransaction) {
                 $this->connection->commit();
@@ -298,6 +309,77 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     }
 
     /**
+     * Every writer increments the version of the lock rows it writes. A plain read returns the versions as of this
+     * transaction's snapshot, a locking read the latest committed versions (on rows already locked by this writer,
+     * so without waiting). If they differ, a writer whose events match this query committed after the snapshot was
+     * taken, so the decision is based on stale data.
+     *
+     * Within its own transaction the snapshot is taken after the locks, so both reads are equal. SQLite itself
+     * refuses to write from a stale read snapshot.
+     *
+     * @param list<string> $readLockKeys
+     *
+     * @throws OptimisticLockException
+     */
+    private function guardStaleSnapshot(array $readLockKeys): void
+    {
+        if ($readLockKeys === [] || !$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            return;
+        }
+
+        if ($this->fetchLockVersions($readLockKeys, false) !== $this->fetchLockVersions($readLockKeys, true)) {
+            throw OptimisticLockException::create();
+        }
+    }
+
+    /**
+     * @param list<string> $lockKeys
+     *
+     * @return array<string, int> Version per lock key, 0 for rows not (yet) visible
+     */
+    private function fetchLockVersions(array $lockKeys, bool $latest): array
+    {
+        $lockSchema = $this->eventStoreLockTableSchema;
+
+        $queryBuilder = $this->connection->createQueryBuilder()
+            ->select($lockSchema->boundaryHashFieldName, $lockSchema->versionFieldName)
+            ->from($lockSchema->tableName)
+            ->where(sprintf('%s IN (:lockKeys)', $lockSchema->boundaryHashFieldName))
+            ->setParameter('lockKeys', $lockKeys, ArrayParameterType::STRING);
+
+        if ($latest) {
+            $queryBuilder->forUpdate();
+        }
+
+        $versions = array_fill_keys($lockKeys, 0);
+
+        foreach ($queryBuilder->executeQuery()->fetchAllKeyValue() as $lockKey => $version) {
+            $versions[(string) $lockKey] = is_numeric($version) ? (int) $version : 0;
+        }
+
+        return $versions;
+    }
+
+    /**
+     * @param list<string> $writeLockKeys
+     */
+    private function incrementLockVersions(array $writeLockKeys): void
+    {
+        if ($writeLockKeys === []) {
+            return;
+        }
+
+        $lockSchema = $this->eventStoreLockTableSchema;
+
+        $this->connection->createQueryBuilder()
+            ->update($lockSchema->tableName)
+            ->set($lockSchema->versionFieldName, sprintf('%s + 1', $lockSchema->versionFieldName))
+            ->where(sprintf('%s IN (:lockKeys)', $lockSchema->boundaryHashFieldName))
+            ->setParameter('lockKeys', $writeLockKeys, ArrayParameterType::STRING)
+            ->executeStatement();
+    }
+
+    /**
      * @param list<string|Stringable> $domainTags
      * @param list<string> $eventNames
      *
@@ -311,16 +393,14 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
     }
 
     /**
-     * Builds a lock key per (domain tag, event name) pair of the read set (the writer's query: domain tags
-     * x event names) and of the write set (each appended event's own domain tags x its event name).
+     * Lock keys of the read set: the writer's query, domain tags x event names.
      *
      * @param list<string|Stringable> $domainTags
      * @param list<string> $eventNames
-     * @param list<RdbmsEvent> $events
      *
      * @return list<string>
      */
-    private function buildLockKeys(array $domainTags, array $eventNames, array $events): array
+    private function buildReadLockKeys(array $domainTags, array $eventNames): array
     {
         $lockKeys = [];
 
@@ -330,12 +410,36 @@ final readonly class DoctrineDbalRdbmsEventStoreRepository implements RdbmsEvent
             }
         }
 
+        return $this->sortLockKeys($lockKeys);
+    }
+
+    /**
+     * Lock keys of the write set: each appended event's own domain tags x its event name.
+     *
+     * @param list<RdbmsEvent> $events
+     *
+     * @return list<string>
+     */
+    private function buildWriteLockKeys(array $events): array
+    {
+        $lockKeys = [];
+
         foreach ($events as $event) {
             foreach ($event->domainTags as $domainTag) {
                 $lockKeys[] = $this->buildLockKey($domainTag, $event->eventName);
             }
         }
 
+        return $this->sortLockKeys($lockKeys);
+    }
+
+    /**
+     * @param list<string> $lockKeys
+     *
+     * @return list<string>
+     */
+    private function sortLockKeys(array $lockKeys): array
+    {
         $lockKeys = array_values(array_unique($lockKeys));
         sort($lockKeys, SORT_STRING);
 

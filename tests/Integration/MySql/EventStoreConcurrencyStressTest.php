@@ -42,15 +42,24 @@ final class EventStoreConcurrencyStressTest extends TestCase
      * Each worker loads and saves inside its own transaction, like an application wrapping the command handler in a
      * transaction (e.g. a doctrine_transaction middleware). Under REPEATABLE READ that transaction reads from the
      * snapshot taken at the load, so the optimistic lock must still detect events committed after the load.
+     *
+     * Deadlocks are allowed here: lock rows can't be committed upfront inside another transaction, so a writer
+     * rolling back a lock row it created can deadlock the writers waiting on it. They are retried by the worker.
      */
     #[Test]
     public function itShouldNeverExceedCapacityWhenLoadingInsideAnApplicationTransaction(): void
     {
-        $this->assertCapacityHoldsUnderStress(courses: 3, capacity: 5, students: 12, skewMs: 0, outerTransaction: true);
+        $this->assertCapacityHoldsUnderStress(courses: 3, capacity: 5, students: 12, skewMs: 0, outerTransaction: true, allowDeadlocks: true);
     }
 
-    private function assertCapacityHoldsUnderStress(int $courses, int $capacity, int $students, int $skewMs, bool $outerTransaction = false): void
-    {
+    private function assertCapacityHoldsUnderStress(
+        int $courses,
+        int $capacity,
+        int $students,
+        int $skewMs,
+        bool $outerTransaction = false,
+        bool $allowDeadlocks = false,
+    ): void {
         $dsn = MySqlTestEnvironment::getDsn();
 
         if ($dsn === null) {
@@ -120,7 +129,9 @@ final class EventStoreConcurrencyStressTest extends TestCase
         }
 
         self::assertGreaterThan(0, $conflicts, 'Workers did not compete, the test proves nothing');
-        self::assertSame(0, $deadlocks, 'Deadlocks occurred between concurrent writers');
+        if (!$allowDeadlocks) {
+            self::assertSame(0, $deadlocks, 'Deadlocks occurred between concurrent writers');
+        }
         self::assertSame(0, $lockWaitTimeouts, 'Lock wait timeouts occurred between concurrent writers');
     }
 

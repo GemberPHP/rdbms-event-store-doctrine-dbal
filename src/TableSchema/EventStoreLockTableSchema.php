@@ -9,5 +9,6 @@ final readonly class EventStoreLockTableSchema
     public function __construct(
         public string $tableName,
         public string $boundaryHashFieldName,
+        public string $versionFieldName,
     ) {}
 }

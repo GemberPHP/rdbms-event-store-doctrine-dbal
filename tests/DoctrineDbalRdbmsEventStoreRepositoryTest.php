@@ -293,6 +293,24 @@ final class DoctrineDbalRdbmsEventStoreRepositoryTest extends TestCase
     }
 
     #[Test]
+    public function itShouldIncrementVersionOfWrittenLockRowsOnly(): void
+    {
+        $this->repository->saveEvents(['version-tag'], ['read_event', 'written_event'], 0, [
+            self::subscribed('fff11111-1111-1111-1111-111111111111', ['version-tag'], '2025-01-01 00:00:00'),
+        ]);
+
+        $versions = array_map(
+            fn(mixed $version) => is_numeric($version) ? (int) $version : null,
+            $this->connection->fetchAllKeyValue('SELECT boundary_hash, version FROM event_store_lock'),
+        );
+
+        // The event is named 'subscribed': its pair is written, the query's pairs are only read
+        self::assertSame(1, $versions[hash('sha256', "version-tag\0subscribed")]);
+        self::assertSame(0, $versions[hash('sha256', "version-tag\0read_event")]);
+        self::assertSame(0, $versions[hash('sha256', "version-tag\0written_event")]);
+    }
+
+    #[Test]
     public function itShouldThrowForUnsupportedPlatform(): void
     {
         $connection = self::createStub(Connection::class);

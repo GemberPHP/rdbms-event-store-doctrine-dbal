@@ -41,10 +41,12 @@ final readonly class TableSchemaFactory
     public static function createDefaultEventStoreLock(
         string $tableName = 'event_store_lock',
         string $boundaryHashFieldName = 'boundary_hash',
+        string $versionFieldName = 'version',
     ): EventStoreLockTableSchema {
         return new EventStoreLockTableSchema(
             $tableName,
             $boundaryHashFieldName,
+            $versionFieldName,
         );
     }
 }

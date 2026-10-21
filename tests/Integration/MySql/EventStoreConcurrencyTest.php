@@ -288,6 +288,61 @@ final class EventStoreConcurrencyTest extends TestCase
         ]);
     }
 
+    #[Test]
+    public function itShouldDetectEventCommittedAfterSnapshotOfApplicationTransaction(): void
+    {
+        $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], 0, [
+            MySqlTestEnvironment::event('s0', ['course-1'], 'StudentSubscribed'),
+        ]);
+
+        // B's application transaction takes its snapshot at the load
+        $this->connectionB->beginTransaction();
+        $expectedByB = count($this->repositoryB->getEvents(['course-1', 'student-2'], ['StudentSubscribed']));
+
+        // A commits a matching event after B's snapshot
+        $this->repositoryA->saveEvents(['course-1', 'student-1'], ['StudentSubscribed'], 1, [
+            MySqlTestEnvironment::event('s1', ['course-1', 'student-1'], 'StudentSubscribed'),
+        ]);
+
+        try {
+            $this->repositoryB->saveEvents(['course-1', 'student-2'], ['StudentSubscribed'], $expectedByB, [
+                MySqlTestEnvironment::event('s2', ['course-1', 'student-2'], 'StudentSubscribed'),
+            ]);
+
+            self::fail('Expected OptimisticLockException: B decided on a stale snapshot');
+        } catch (OptimisticLockException) {
+            $this->connectionB->rollBack();
+        }
+
+        self::assertSame(2, $this->countEvents());
+    }
+
+    #[Test]
+    public function itShouldNotRejectApplicationTransactionForUnrelatedCommits(): void
+    {
+        $this->repositoryA->saveEvents(['course-1'], ['StudentSubscribed'], 0, [
+            MySqlTestEnvironment::event('s0', ['course-1'], 'StudentSubscribed'),
+        ]);
+
+        $this->connectionB->beginTransaction();
+        $expectedByB = count($this->repositoryB->getEvents(['course-1', 'student-2'], ['StudentSubscribed']));
+
+        // Commits after B's snapshot that don't match B's query: another course, and another event type
+        $this->repositoryA->saveEvents(['course-2', 'student-1'], ['StudentSubscribed'], 0, [
+            MySqlTestEnvironment::event('s1', ['course-2', 'student-1'], 'StudentSubscribed'),
+        ]);
+        $this->repositoryA->saveEvents(['course-1'], ['CourseRenamed'], 0, [
+            MySqlTestEnvironment::event('r1', ['course-1'], 'CourseRenamed'),
+        ]);
+
+        $this->repositoryB->saveEvents(['course-1', 'student-2'], ['StudentSubscribed'], $expectedByB, [
+            MySqlTestEnvironment::event('s2', ['course-1', 'student-2'], 'StudentSubscribed'),
+        ]);
+        $this->connectionB->commit();
+
+        self::assertSame(4, $this->countEvents());
+    }
+
     private function waitForLockWait(): void
     {
         for ($attempt = 0; $attempt < 100; ++$attempt) {

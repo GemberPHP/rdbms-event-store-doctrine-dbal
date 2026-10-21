@@ -14,7 +14,8 @@ CREATE TABLE `event_store_relation` (
 );
 
 CREATE TABLE `event_store_lock` (
-  `boundary_hash` char(64) NOT NULL PRIMARY KEY
+  `boundary_hash` char(64) NOT NULL PRIMARY KEY,
+  `version` int NOT NULL DEFAULT 0
 );
 
 CREATE TABLE `saga_store` (

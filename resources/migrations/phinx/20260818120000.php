@@ -10,6 +10,7 @@ final class V20260818120000 extends AbstractMigration
     {
         $this->table('event_store_lock', ['id' => false, 'primary_key' => 'boundary_hash'])
             ->addColumn('boundary_hash', 'char', ['limit' => 64, 'null' => false])
+            ->addColumn('version', 'integer', ['null' => false, 'default' => 0])
             ->create();
     }
 }

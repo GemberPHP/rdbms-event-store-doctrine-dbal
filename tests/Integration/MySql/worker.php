@@ -10,12 +10,14 @@ declare(strict_types=1);
  * boundary {course, student}, odd workers the boundary {course}, so writers both
  * overlap and share identical boundaries.
  *
- * Usage: php worker.php <workerId> <courses> <capacity> <attempts> [<startAt> [<students> <skewMs>]]
+ * Usage: php worker.php <workerId> <courses> <capacity> <attempts> [<startAt> [<students> <skewMs> [<outerTransaction>]]]
  * Workers wait until the <startAt> unix timestamp (float), so they start competing at the same time.
  * With <students> > 0, students come from a pool shared across courses (a student may subscribe more than once,
  * only capacity matters), so a writer's stream also contains other courses' events via the student tag.
  * <skewMs> stamps applied_at up to that many milliseconds in the past, as happens when a writer stamps its
  * events before waiting for locks, or with clock drift between hosts.
+ * With <outerTransaction> 1, each attempt loads and saves inside its own transaction, like an application
+ * wrapping the command handler in a transaction (e.g. a doctrine_transaction middleware).
  * Prints a JSON summary to stdout.
  */
 
@@ -33,6 +35,7 @@ $dsn = MySqlTestEnvironment::getDsn() ?? throw new RuntimeException('Missing ' .
 $startAt = (float) ($argv[5] ?? 0);
 $students = (int) ($argv[6] ?? 0);
 $skewMs = (int) ($argv[7] ?? 0);
+$outerTransaction = (bool) ($argv[8] ?? false);
 
 $connection = MySqlTestEnvironment::createConnection($dsn);
 $repository = MySqlTestEnvironment::createRepository($connection);
@@ -49,20 +52,33 @@ for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
     $domainTags = $workerId % 2 === 0 ? [$course, $student] : [$course];
 
     for ($retry = 1; $retry <= 100; ++$retry) {
-        $events = $repository->getEvents($domainTags, ['StudentSubscribed']);
-
-        $subscriptions = count(array_filter(
-            $events,
-            fn($event) => in_array($course, $event->domainTags, true),
-        ));
-
-        if ($subscriptions >= $capacity) {
-            ++$summary['full'];
-
-            break;
+        if ($outerTransaction) {
+            $connection->beginTransaction();
         }
 
         try {
+            $events = $repository->getEvents($domainTags, ['StudentSubscribed']);
+
+            $subscriptions = count(array_filter(
+                $events,
+                fn($event) => in_array($course, $event->domainTags, true),
+            ));
+
+            if ($subscriptions >= $capacity) {
+                if ($outerTransaction) {
+                    $connection->commit();
+                }
+
+                ++$summary['full'];
+
+                break;
+            }
+
+            if ($outerTransaction) {
+                // Handler work between loading and saving, widening the window as in a real application
+                usleep(random_int(0, 3000));
+            }
+
             $repository->saveEvents($domainTags, ['StudentSubscribed'], count($events), [
                 MySqlTestEnvironment::event(
                     sprintf('%d-%d-%d', $workerId, $attempt, $retry),
@@ -71,6 +87,10 @@ for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
                     (new DateTimeImmutable())->modify(sprintf('-%d microseconds', random_int(0, $skewMs * 1000))),
                 ),
             ]);
+
+            if ($outerTransaction) {
+                $connection->commit();
+            }
 
             ++$summary['subscribed'];
 
@@ -81,6 +101,10 @@ for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
             ++$summary['deadlocks'];
         } catch (LockWaitTimeoutException) {
             ++$summary['lockWaitTimeouts'];
+        } finally {
+            if ($connection->isTransactionActive() && $outerTransaction) {
+                $connection->rollBack();
+            }
         }
     }
 }

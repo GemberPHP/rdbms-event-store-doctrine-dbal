@@ -38,8 +38,28 @@ final class EventStoreConcurrencyStressTest extends TestCase
         $this->assertCapacityHoldsUnderStress(courses: 3, capacity: 5, students: 12, skewMs: 30);
     }
 
-    private function assertCapacityHoldsUnderStress(int $courses, int $capacity, int $students, int $skewMs): void
+    /**
+     * Each worker loads and saves inside its own transaction, like an application wrapping the command handler in a
+     * transaction (e.g. a doctrine_transaction middleware). Under REPEATABLE READ that transaction reads from the
+     * snapshot taken at the load, so the optimistic lock must still detect events committed after the load.
+     *
+     * Deadlocks are allowed here: lock rows can't be committed upfront inside another transaction, so a writer
+     * rolling back a lock row it created can deadlock the writers waiting on it. They are retried by the worker.
+     */
+    #[Test]
+    public function itShouldNeverExceedCapacityWhenLoadingInsideAnApplicationTransaction(): void
     {
+        $this->assertCapacityHoldsUnderStress(courses: 3, capacity: 5, students: 12, skewMs: 0, outerTransaction: true, allowDeadlocks: true);
+    }
+
+    private function assertCapacityHoldsUnderStress(
+        int $courses,
+        int $capacity,
+        int $students,
+        int $skewMs,
+        bool $outerTransaction = false,
+        bool $allowDeadlocks = false,
+    ): void {
         $dsn = MySqlTestEnvironment::getDsn();
 
         if ($dsn === null) {
@@ -55,7 +75,7 @@ final class EventStoreConcurrencyStressTest extends TestCase
 
         try {
             for ($workerId = 1; $workerId <= self::WORKERS; ++$workerId) {
-                $processes[] = $this->spawnWorker([$workerId, $courses, $capacity, self::ATTEMPTS_PER_WORKER, $startAt, $students, $skewMs]);
+                $processes[] = $this->spawnWorker([$workerId, $courses, $capacity, self::ATTEMPTS_PER_WORKER, $startAt, $students, $skewMs, (int) $outerTransaction]);
             }
         } catch (RuntimeException $exception) {
             foreach ($processes as [$process]) {
@@ -85,8 +105,6 @@ final class EventStoreConcurrencyStressTest extends TestCase
             $lockWaitTimeouts += $summary['lockWaitTimeouts'];
         }
 
-        self::assertGreaterThan(0, $conflicts, 'Workers did not compete, the test proves nothing');
-
         /** @var list<array{domain_tag: string, subscriptions: int|string}> $rows */
         $rows = $connection->fetchAllAssociative(
             <<<'SQL'
@@ -110,7 +128,10 @@ final class EventStoreConcurrencyStressTest extends TestCase
             );
         }
 
-        self::assertSame(0, $deadlocks, 'Deadlocks occurred between concurrent writers');
+        self::assertGreaterThan(0, $conflicts, 'Workers did not compete, the test proves nothing');
+        if (!$allowDeadlocks) {
+            self::assertSame(0, $deadlocks, 'Deadlocks occurred between concurrent writers');
+        }
         self::assertSame(0, $lockWaitTimeouts, 'Lock wait timeouts occurred between concurrent writers');
     }
 

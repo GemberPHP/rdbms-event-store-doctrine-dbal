@@ -80,6 +80,7 @@ final class TableSchemaFactoryTest extends TestCase
 
         self::assertSame('event_store_lock', $schema->tableName);
         self::assertSame('boundary_hash', $schema->boundaryHashFieldName);
+        self::assertSame('version', $schema->versionFieldName);
     }
 
     #[Test]
@@ -88,9 +89,11 @@ final class TableSchemaFactoryTest extends TestCase
         $schema = TableSchemaFactory::createDefaultEventStoreLock(
             'custom_event_store_lock',
             'custom_boundary_hash',
+            'custom_version',
         );
 
         self::assertSame('custom_event_store_lock', $schema->tableName);
         self::assertSame('custom_boundary_hash', $schema->boundaryHashFieldName);
+        self::assertSame('custom_version', $schema->versionFieldName);
     }
 }

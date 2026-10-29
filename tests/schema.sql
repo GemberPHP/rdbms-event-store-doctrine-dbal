@@ -24,17 +24,16 @@ CREATE TABLE `saga_store` (
   `payload` json NOT NULL,
   `created_at` timestamp(6) NOT NULL,
   `updated_at` timestamp(6) NULL DEFAULT NULL,
+  `revision` int NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
 );
 
 CREATE TABLE `saga_store_relation` (
   `id` varchar(50) NOT NULL,
+  `saga_name` varchar(255) NOT NULL,
   `saga_id` varchar(50) NOT NULL,
-  PRIMARY KEY (`id`, `saga_id`)
-);
-
-CREATE TABLE `saga_store_lock` (
-  `boundary_hash` char(64) NOT NULL PRIMARY KEY
+  PRIMARY KEY (`id`, `saga_id`),
+  UNIQUE (`saga_name`, `saga_id`)
 );
 
 CREATE TABLE `snapshot_store` (

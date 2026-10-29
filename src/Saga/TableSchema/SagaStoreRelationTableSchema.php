@@ -10,5 +10,6 @@ final readonly class SagaStoreRelationTableSchema
         public string $tableName,
         public string $idFieldName,
         public string $sagaIdFieldName,
+        public string $sagaNameFieldName,
     ) {}
 }

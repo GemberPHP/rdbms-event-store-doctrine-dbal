@@ -24,6 +24,7 @@ final class DoctrineDbalRdbmsSagaFactoryTest extends TestCase
             'payload' => '{"some":"data"}',
             'createdAt' => '2018-12-01 12:05:08.234543',
             'updatedAt' => null,
+            'revision' => '3',
         ]);
 
         self::assertSame('01K7Q14MMW2FQP2JS1RHQS7QXP', $saga->id);
@@ -32,5 +33,6 @@ final class DoctrineDbalRdbmsSagaFactoryTest extends TestCase
         self::assertSame('{"some":"data"}', $saga->payload);
         self::assertEquals(new DateTimeImmutable('2018-12-01 12:05:08.234543'), $saga->createdAt);
         self::assertNull($saga->updatedAt);
+        self::assertSame(3, $saga->revision);
     }
 }

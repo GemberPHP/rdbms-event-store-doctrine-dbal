@@ -27,6 +27,7 @@ final readonly class DoctrineDbalRdbmsSagaFactory
             $row['payload'],
             new DateTimeImmutable($row['createdAt']),
             $row['updatedAt'] !== null ? new DateTimeImmutable($row['updatedAt']) : null,
+            (int) $row['revision'],
         );
     }
 }

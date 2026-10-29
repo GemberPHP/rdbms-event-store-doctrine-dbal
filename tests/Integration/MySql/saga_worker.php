@@ -40,10 +40,14 @@ for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
     for ($retry = 1; $retry <= 100; ++$retry) {
         try {
             try {
+                $saga = $repository->get('course-waitlist', $sagaId);
+
                 /** @var array{waitlist: list<string>} $state */
-                $state = json_decode($repository->get('course-waitlist', $sagaId)->payload, true, flags: JSON_THROW_ON_ERROR);
+                $state = json_decode($saga->payload, true, flags: JSON_THROW_ON_ERROR);
+                $revision = $saga->revision;
             } catch (RdbmsSagaNotFoundException) {
                 $state = ['waitlist' => []];
+                $revision = null;
             }
 
             // Saga handler work between loading and saving
@@ -51,7 +55,7 @@ for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
 
             $state['waitlist'][] = $entry;
 
-            $repository->save('course-waitlist', json_encode($state, JSON_THROW_ON_ERROR), new DateTimeImmutable(), $sagaId);
+            $repository->save('course-waitlist', json_encode($state, JSON_THROW_ON_ERROR), new DateTimeImmutable(), $revision, $sagaId);
 
             $saved[$sagaId][] = $entry;
 

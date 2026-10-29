@@ -15,6 +15,7 @@ final readonly class SagaTableSchemaFactory
         string $createdAtFieldFormat = 'Y-m-d H:i:s.u',
         string $updatedAtFieldName = 'updated_at',
         string $updatedAtFieldFormat = 'Y-m-d H:i:s.u',
+        string $revisionFieldName = 'revision',
     ): SagaStoreTableSchema {
         return new SagaStoreTableSchema(
             $tableName,
@@ -25,6 +26,7 @@ final readonly class SagaTableSchemaFactory
             $createdAtFieldFormat,
             $updatedAtFieldName,
             $updatedAtFieldFormat,
+            $revisionFieldName,
         );
     }
 
@@ -32,21 +34,13 @@ final readonly class SagaTableSchemaFactory
         string $tableName = 'saga_store_relation',
         string $idFieldName = 'id',
         string $sagaIdFieldName = 'saga_id',
+        string $sagaNameFieldName = 'saga_name',
     ): SagaStoreRelationTableSchema {
         return new SagaStoreRelationTableSchema(
             $tableName,
             $idFieldName,
             $sagaIdFieldName,
-        );
-    }
-
-    public static function createDefaultSagaStoreLock(
-        string $tableName = 'saga_store_lock',
-        string $boundaryHashFieldName = 'boundary_hash',
-    ): SagaStoreLockTableSchema {
-        return new SagaStoreLockTableSchema(
-            $tableName,
-            $boundaryHashFieldName,
+            $sagaNameFieldName,
         );
     }
 }

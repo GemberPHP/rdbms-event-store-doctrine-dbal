@@ -107,4 +107,20 @@ final class DoctrineDbalTransactionalTest extends TestCase
 
         self::assertSame(0, $this->connection->getTransactionNestingLevel());
     }
+
+    #[Test]
+    public function itShouldTellWhetherTransactionIsActive(): void
+    {
+        self::assertFalse($this->transactional->isActive());
+
+        $this->transactional->transactional(fn() => self::assertTrue($this->transactional->isActive()));
+
+        self::assertFalse($this->transactional->isActive());
+
+        $this->connection->beginTransaction();
+
+        self::assertTrue($this->transactional->isActive());
+
+        $this->connection->rollBack();
+    }
 }

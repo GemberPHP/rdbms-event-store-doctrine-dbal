@@ -131,7 +131,7 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
             '01K7Q0GR8ABHBZG8QCGTXJXJ7T',
         );
 
-        $this->repository->save(
+        $saved = $this->repository->save(
             'some.saga',
             '{"some":"updated"}',
             new DateTimeImmutable('2025-10-10 13:30:12'),
@@ -141,6 +141,9 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
         );
 
         $saga = $this->repository->get('some.saga', '01K76GDQ5RT71G7HQVNR264KD4');
+
+        // The returned saga is the stored one: saving it again is based on it
+        self::assertEquals($saga, $saved);
 
         self::assertSame('01K7Q083CX4T7Z0NT5CKEX8NEJ', $saga->id);
         self::assertSame('some.saga', $saga->sagaName);
@@ -197,21 +200,23 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldRejectCreatingSagaWithSagaIdOfAnotherSaga(): void
+    public function itShouldRejectConcurrentCreationOwningOnlySomeOfTheSagaIdsAsRetryable(): void
     {
         $this->identityGenerator->ids = ['saga-1', 'saga-2'];
 
-        // A customer's first order saga owns customer-1; the second order saga also claims it
-        $this->repository->save('order.saga', '{"order":1}', new DateTimeImmutable(), null, 'order-1', 'customer-1');
+        // Two first events of the same saga handled concurrently: one carries only the order id, the other also the
+        // payment id. Neither found the saga; the first creates it.
+        $this->repository->save('order.saga', '{"order":1}', new DateTimeImmutable(), null, 'order-1');
 
         try {
-            $this->repository->save('order.saga', '{"order":2}', new DateTimeImmutable(), null, 'order-2', 'customer-1');
+            $this->repository->save('order.saga', '{"order":2}', new DateTimeImmutable(), null, 'order-1', 'payment-1');
 
-            self::fail('Expected RdbmsSagaIdAlreadyInUseException');
-        } catch (RdbmsSagaIdAlreadyInUseException $exception) {
-            self::assertStringContainsString('customer-1', $exception->getMessage());
+            self::fail('Expected RdbmsSagaConcurrencyException');
+        } catch (RdbmsSagaConcurrencyException) {
         }
 
+        // Retrying finds the saga created concurrently
+        self::assertSame('{"order":1}', $this->repository->get('order.saga', 'order-1', 'payment-1')->payload);
         self::assertEquals(1, $this->connection->fetchOne('SELECT COUNT(*) FROM saga_store'));
     }
 
@@ -240,7 +245,8 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
             $this->repository->save('some.saga', '{"saga":"a2"}', new DateTimeImmutable(), $sagaA, 'a-payment');
 
             self::fail('Expected RdbmsSagaIdAlreadyInUseException');
-        } catch (RdbmsSagaIdAlreadyInUseException) {
+        } catch (RdbmsSagaIdAlreadyInUseException $exception) {
+            self::assertStringContainsString('a-payment', $exception->getMessage());
         }
 
         $sagaB = $this->repository->get('some.saga', 'a-payment');

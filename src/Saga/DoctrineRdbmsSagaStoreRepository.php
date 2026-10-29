@@ -8,7 +8,6 @@ use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
-use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSaga;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaConcurrencyException;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaIdAlreadyInUseException;
@@ -134,7 +133,7 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
             }
 
             if ($exception instanceof UniqueConstraintViolationException) {
-                throw $this->classifySagaIdConflict($exception, $sagaName, $previous, $sagaIds, !$ownsTransaction);
+                throw $this->classifySagaIdConflict($exception, $sagaName, $previous, $sagaIds);
             }
 
             // A deadlock between concurrent saves: the saga must be reloaded and the change retried
@@ -306,9 +305,11 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
     }
 
     /**
-     * A saga id was already taken. When all saga ids of a new saga belong to one other saga, that saga was created
-     * concurrently (e.g. two processes handling the first events of the same saga): reloading finds it, so retrying
-     * is useful. Otherwise a saga id belongs to another saga, which retrying can't change.
+     * A saga id was already taken:
+     * - by a new saga: a saga is only created when none of the saga ids of the event it handles belongs to a saga, so
+     *   another process created it concurrently. Reloading finds it, so retrying is useful.
+     * - by an existing saga: an added saga id belongs to another saga, which retrying can't change. Unless no other
+     *   owner is visible (rolled back again, or committed after this transaction's snapshot): then retrying may succeed.
      *
      * @param list<string> $sagaIds
      */
@@ -317,25 +318,17 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
         string $sagaName,
         ?RdbmsSaga $previous,
         array $sagaIds,
-        bool $inOuterTransaction,
     ): RdbmsSagaConcurrencyException|RdbmsSagaIdAlreadyInUseException {
-        try {
-            $owners = $this->findSagaIdOwners($sagaName, $sagaIds, $inOuterTransaction);
-        } catch (DeadlockException $deadlock) {
-            // Looking up the owners inside the transaction deadlocked with a concurrent save: reload and retry
-            return RdbmsSagaConcurrencyException::create($deadlock);
-        }
-
-        $ownId = $previous?->id;
-
-        $conflicts = array_filter($owners, fn(string $owner) => $owner !== $ownId);
-
-        if ($previous === null && count($owners) === count($sagaIds) && count(array_unique($owners)) === 1) {
+        if ($previous === null) {
             return RdbmsSagaConcurrencyException::create($exception);
         }
 
+        $conflicts = array_filter(
+            $this->findSagaIdOwners($sagaName, $sagaIds),
+            fn(string $owner) => $owner !== $previous->id,
+        );
+
         if ($conflicts === []) {
-            // The conflicting saga is gone again (rolled back): reloading and retrying may succeed
             return RdbmsSagaConcurrencyException::create($exception);
         }
 
@@ -347,25 +340,20 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
      *
      * @return array<array-key, string> Saga row id per saga id that is in use (numeric saga ids become int keys)
      */
-    private function findSagaIdOwners(string $sagaName, array $sagaIds, bool $inOuterTransaction): array
+    private function findSagaIdOwners(string $sagaName, array $sagaIds): array
     {
         $schema = $this->sagaStoreRelationTableSchema;
 
-        $queryBuilder = $this->connection->createQueryBuilder()
+        /** @var list<array{sagaId: string, id: string}> $rows */
+        $rows = $this->connection->createQueryBuilder()
             ->select(sprintf('%s as sagaId', $schema->sagaIdFieldName), sprintf('%s as id', $schema->idFieldName))
             ->from($schema->tableName)
             ->where(sprintf('%s = :sagaName', $schema->sagaNameFieldName))
             ->andWhere(sprintf('%s IN (:sagaIds)', $schema->sagaIdFieldName))
             ->setParameter('sagaName', $sagaName)
-            ->setParameter('sagaIds', $sagaIds, ArrayParameterType::STRING);
-
-        // Inside a transaction with an older snapshot, a locking read sees the owner committed in the meantime
-        if ($inOuterTransaction && !$this->connection->getDatabasePlatform() instanceof SQLitePlatform) {
-            $queryBuilder->forUpdate();
-        }
-
-        /** @var list<array{sagaId: string, id: string}> $rows */
-        $rows = $queryBuilder->executeQuery()->fetchAllAssociative();
+            ->setParameter('sagaIds', $sagaIds, ArrayParameterType::STRING)
+            ->executeQuery()
+            ->fetchAllAssociative();
 
         $owners = [];
 

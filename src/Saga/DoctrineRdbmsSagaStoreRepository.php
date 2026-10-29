@@ -8,8 +8,10 @@ use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
+use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSaga;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaConcurrencyException;
+use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaIdAlreadyInUseException;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaStoreRepository;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaNotFoundException;
 use Gember\DependencyContracts\Util\Generator\Identity\IdentityGenerator;
@@ -96,9 +98,11 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
         string $sagaName,
         string $payload,
         DateTimeImmutable $now,
-        ?int $expectedRevision,
+        ?RdbmsSaga $previous,
         Stringable|string ...$sagaIds,
     ): RdbmsSaga {
+        $sagaIds = $this->normalizeSagaIds(...$sagaIds);
+
         /*
          * When called inside a transaction (e.g. a transactional decorator), run within it rather than
          * opening a savepoint: the caller owns atomicity and rollback. A savepoint would break on a
@@ -111,9 +115,9 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
         }
 
         try {
-            $result = $expectedRevision === null
-                ? $this->create($sagaName, $payload, $now, ...$sagaIds)
-                : $this->update($sagaName, $payload, $now, $expectedRevision, ...$sagaIds);
+            $result = $previous === null
+                ? $this->create($sagaName, $payload, $now, $sagaIds)
+                : $this->update($previous, $payload, $now, $sagaIds);
 
             if ($ownsTransaction) {
                 $this->connection->commit();
@@ -129,11 +133,12 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
                 }
             }
 
-            /*
-             * A saga id already taken (concurrent creation, or the id belongs to another saga) or a deadlock
-             * between concurrent saves: the saga must be reloaded and the change retried.
-             */
-            if ($exception instanceof UniqueConstraintViolationException || $exception instanceof DeadlockException) {
+            if ($exception instanceof UniqueConstraintViolationException) {
+                throw $this->classifySagaIdConflict($exception, $sagaName, $previous, $sagaIds, !$ownsTransaction);
+            }
+
+            // A deadlock between concurrent saves: the saga must be reloaded and the change retried
+            if ($exception instanceof DeadlockException) {
                 throw RdbmsSagaConcurrencyException::create($exception);
             }
 
@@ -176,12 +181,11 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
         return $this->sagaFactory->createFromRow($payload);
     }
 
-    private function create(
-        string $sagaName,
-        string $payload,
-        DateTimeImmutable $now,
-        Stringable|string ...$sagaIds,
-    ): RdbmsSaga {
+    /**
+     * @param list<string> $sagaIds
+     */
+    private function create(string $sagaName, string $payload, DateTimeImmutable $now, array $sagaIds): RdbmsSaga
+    {
         $id = $this->identityGenerator->generate();
 
         $sagaStoreSchema = $this->sagaStoreTableSchema;
@@ -202,43 +206,26 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
             ])
             ->executeStatement();
 
-        // The unique (saga name, saga id) key rejects a saga created concurrently for the same saga id
-        $this->insertSagaIds($id, $sagaName, ...$sagaIds);
+        // The unique (saga name, saga id) key rejects a saga id that already belongs to a saga
+        $this->insertSagaIds($id, $sagaName, $sagaIds);
 
-        return new RdbmsSaga(
-            $id,
-            $sagaName,
-            array_values($sagaIds),
-            $payload,
-            $now,
-            null,
-            0,
-        );
+        return new RdbmsSaga($id, $sagaName, $sagaIds, $payload, $now, null, 0);
     }
 
     /**
+     * @param list<string> $sagaIds
+     *
      * @throws RdbmsSagaConcurrencyException
      */
-    private function update(
-        string $sagaName,
-        string $payload,
-        DateTimeImmutable $now,
-        int $expectedRevision,
-        Stringable|string ...$sagaIds,
-    ): RdbmsSaga {
+    private function update(RdbmsSaga $previous, string $payload, DateTimeImmutable $now, array $sagaIds): RdbmsSaga
+    {
         $sagaStoreSchema = $this->sagaStoreTableSchema;
         $sagaStoreRelationSchema = $this->sagaStoreRelationTableSchema;
 
-        try {
-            $previous = $this->get($sagaName, ...$sagaIds);
-        } catch (RdbmsSagaNotFoundException $exception) {
-            // The saga was loaded, but none of its saga ids find it anymore: changed concurrently
-            throw RdbmsSagaConcurrencyException::create($exception);
-        }
-
         /*
-         * Only update the saga when it's still at the revision it was loaded with. The update reads the latest
-         * committed row (also inside a transaction with an older snapshot), so a concurrent save is always detected.
+         * Only update the saga row it was loaded from, and only while it's still at the loaded revision. The update
+         * reads the latest committed row (also inside a transaction with an older snapshot), so a concurrent save is
+         * always detected, and it locks the row until the end of the transaction.
          */
         $updated = $this->connection->createQueryBuilder()
             ->update($sagaStoreSchema->tableName)
@@ -250,48 +237,153 @@ final readonly class DoctrineRdbmsSagaStoreRepository implements RdbmsSagaStoreR
             ->setParameter('payload', $payload)
             ->setParameter('updatedAt', $now->format($sagaStoreSchema->updatedAtFieldFormat))
             ->setParameter('id', $previous->id)
-            ->setParameter('expectedRevision', $expectedRevision)
+            ->setParameter('expectedRevision', $previous->revision)
             ->executeStatement();
 
         if ($updated === 0) {
             throw RdbmsSagaConcurrencyException::create();
         }
 
-        $this->connection->createQueryBuilder()
-            ->delete($sagaStoreRelationSchema->tableName)
-            ->where(sprintf('%s = :id', $sagaStoreRelationSchema->idFieldName))
-            ->setParameter('id', $previous->id)
-            ->executeStatement();
+        /*
+         * Only write the saga ids that changed. Its loaded ids are still current: changing them requires saving the
+         * saga, which would have changed its revision.
+         */
+        $previousSagaIds = $this->normalizeSagaIds(...$previous->sagaIds);
+        $removedSagaIds = array_values(array_diff($previousSagaIds, $sagaIds));
+        $addedSagaIds = array_values(array_diff($sagaIds, $previousSagaIds));
 
-        $this->insertSagaIds($previous->id, $sagaName, ...$sagaIds);
+        if ($removedSagaIds !== []) {
+            $this->connection->createQueryBuilder()
+                ->delete($sagaStoreRelationSchema->tableName)
+                ->where(sprintf('%s = :id', $sagaStoreRelationSchema->idFieldName))
+                ->andWhere(sprintf('%s IN (:sagaIds)', $sagaStoreRelationSchema->sagaIdFieldName))
+                ->setParameter('id', $previous->id)
+                ->setParameter('sagaIds', $removedSagaIds, ArrayParameterType::STRING)
+                ->executeStatement();
+        }
+
+        $this->insertSagaIds($previous->id, $previous->sagaName, $addedSagaIds);
 
         return new RdbmsSaga(
             $previous->id,
-            $sagaName,
-            array_values($sagaIds),
+            $previous->sagaName,
+            $sagaIds,
             $payload,
             $previous->createdAt,
             $now,
-            $expectedRevision + 1,
+            $previous->revision + 1,
         );
     }
 
-    private function insertSagaIds(string $id, string $sagaName, Stringable|string ...$sagaIds): void
+    /**
+     * @param list<string> $sagaIds
+     */
+    private function insertSagaIds(string $id, string $sagaName, array $sagaIds): void
     {
-        $sagaStoreRelationSchema = $this->sagaStoreRelationTableSchema;
+        if ($sagaIds === []) {
+            return;
+        }
+
+        $schema = $this->sagaStoreRelationTableSchema;
+        $parameters = [];
 
         foreach ($sagaIds as $sagaId) {
-            $this->connection->createQueryBuilder()
-                ->insert($sagaStoreRelationSchema->tableName)
-                ->setValue($sagaStoreRelationSchema->idFieldName, ':id')
-                ->setValue($sagaStoreRelationSchema->sagaNameFieldName, ':sagaName')
-                ->setValue($sagaStoreRelationSchema->sagaIdFieldName, ':sagaId')
-                ->setParameters([
-                    'id' => $id,
-                    'sagaName' => $sagaName,
-                    'sagaId' => (string) $sagaId,
-                ])
-                ->executeStatement();
+            $parameters = [...$parameters, $id, $sagaName, $sagaId];
         }
+
+        // One statement, in sorted saga id order
+        $this->connection->executeStatement(
+            sprintf(
+                'INSERT INTO %s (%s, %s, %s) VALUES %s',
+                $schema->tableName,
+                $schema->idFieldName,
+                $schema->sagaNameFieldName,
+                $schema->sagaIdFieldName,
+                implode(', ', array_fill(0, count($sagaIds), '(?, ?, ?)')),
+            ),
+            $parameters,
+        );
+    }
+
+    /**
+     * A saga id was already taken. When all saga ids of a new saga belong to one other saga, that saga was created
+     * concurrently (e.g. two processes handling the first events of the same saga): reloading finds it, so retrying
+     * is useful. Otherwise a saga id belongs to another saga, which retrying can't change.
+     *
+     * @param list<string> $sagaIds
+     */
+    private function classifySagaIdConflict(
+        UniqueConstraintViolationException $exception,
+        string $sagaName,
+        ?RdbmsSaga $previous,
+        array $sagaIds,
+        bool $inOuterTransaction,
+    ): RdbmsSagaConcurrencyException|RdbmsSagaIdAlreadyInUseException {
+        try {
+            $owners = $this->findSagaIdOwners($sagaName, $sagaIds, $inOuterTransaction);
+        } catch (DeadlockException $deadlock) {
+            // Looking up the owners inside the transaction deadlocked with a concurrent save: reload and retry
+            return RdbmsSagaConcurrencyException::create($deadlock);
+        }
+
+        $ownId = $previous?->id;
+
+        $conflicts = array_filter($owners, fn(string $owner) => $owner !== $ownId);
+
+        if ($previous === null && count($owners) === count($sagaIds) && count(array_unique($owners)) === 1) {
+            return RdbmsSagaConcurrencyException::create($exception);
+        }
+
+        if ($conflicts === []) {
+            // The conflicting saga is gone again (rolled back): reloading and retrying may succeed
+            return RdbmsSagaConcurrencyException::create($exception);
+        }
+
+        return RdbmsSagaIdAlreadyInUseException::create($sagaName, (string) array_key_first($conflicts), $exception);
+    }
+
+    /**
+     * @param list<string> $sagaIds
+     *
+     * @return array<array-key, string> Saga row id per saga id that is in use (numeric saga ids become int keys)
+     */
+    private function findSagaIdOwners(string $sagaName, array $sagaIds, bool $inOuterTransaction): array
+    {
+        $schema = $this->sagaStoreRelationTableSchema;
+
+        $queryBuilder = $this->connection->createQueryBuilder()
+            ->select(sprintf('%s as sagaId', $schema->sagaIdFieldName), sprintf('%s as id', $schema->idFieldName))
+            ->from($schema->tableName)
+            ->where(sprintf('%s = :sagaName', $schema->sagaNameFieldName))
+            ->andWhere(sprintf('%s IN (:sagaIds)', $schema->sagaIdFieldName))
+            ->setParameter('sagaName', $sagaName)
+            ->setParameter('sagaIds', $sagaIds, ArrayParameterType::STRING);
+
+        // Inside a transaction with an older snapshot, a locking read sees the owner committed in the meantime
+        if ($inOuterTransaction && !$this->connection->getDatabasePlatform() instanceof SQLitePlatform) {
+            $queryBuilder->forUpdate();
+        }
+
+        /** @var list<array{sagaId: string, id: string}> $rows */
+        $rows = $queryBuilder->executeQuery()->fetchAllAssociative();
+
+        $owners = [];
+
+        foreach ($rows as $row) {
+            $owners[$row['sagaId']] = $row['id'];
+        }
+
+        return $owners;
+    }
+
+    /**
+     * @return list<string> Unique saga ids, sorted
+     */
+    private function normalizeSagaIds(Stringable|string ...$sagaIds): array
+    {
+        $sagaIds = array_values(array_unique(array_map(fn($sagaId) => (string) $sagaId, $sagaIds)));
+        sort($sagaIds, SORT_STRING);
+
+        return $sagaIds;
     }
 }

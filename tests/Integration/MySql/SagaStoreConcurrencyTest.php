@@ -64,17 +64,17 @@ final class SagaStoreConcurrencyTest extends TestCase
     #[Test]
     public function itShouldRejectStaleSaveInsideApplicationTransaction(): void
     {
-        $this->repositoryA->save('course-waitlist', '{"waitlist":[]}', new DateTimeImmutable(), null, 'course-1');
+        $created = $this->repositoryA->save('course-waitlist', '{"waitlist":[]}', new DateTimeImmutable(), null, 'course-1');
 
         // B's application transaction loads revision 0 (its snapshot is taken here)
         $this->connectionB->beginTransaction();
         $loadedByB = $this->repositoryB->get('course-waitlist', 'course-1');
 
         // A saves in between: revision 1
-        $this->repositoryA->save('course-waitlist', '{"waitlist":["S1"]}', new DateTimeImmutable(), 0, 'course-1');
+        $this->repositoryA->save('course-waitlist', '{"waitlist":["S1"]}', new DateTimeImmutable(), $created, 'course-1');
 
         try {
-            $this->repositoryB->save('course-waitlist', '{"waitlist":["S2"]}', new DateTimeImmutable(), $loadedByB->revision, 'course-1');
+            $this->repositoryB->save('course-waitlist', '{"waitlist":["S2"]}', new DateTimeImmutable(), $loadedByB, 'course-1');
 
             self::fail('Expected RdbmsSagaConcurrencyException: B saved from a stale state');
         } catch (RdbmsSagaConcurrencyException) {

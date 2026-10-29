@@ -54,7 +54,6 @@ final class MySqlTestEnvironment
             $connection,
             SagaTableSchemaFactory::createDefaultSagaStore(),
             SagaTableSchemaFactory::createDefaultSagaStoreRelation(),
-            SagaTableSchemaFactory::createDefaultSagaStoreLock(),
             new DoctrineDbalRdbmsSagaFactory(),
             new class implements IdentityGenerator {
                 public function generate(): string

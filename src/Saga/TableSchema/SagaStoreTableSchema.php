@@ -15,5 +15,6 @@ final readonly class SagaStoreTableSchema
         public string $createdAtFieldFormat,
         public string $updatedAtFieldName,
         public string $updatedAtFieldFormat,
+        public string $revisionFieldName,
     ) {}
 }

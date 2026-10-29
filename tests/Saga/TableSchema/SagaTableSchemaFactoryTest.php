@@ -26,6 +26,7 @@ final class SagaTableSchemaFactoryTest extends TestCase
         self::assertSame('Y-m-d H:i:s.u', $schema->createdAtFieldFormat);
         self::assertSame('updated_at', $schema->updatedAtFieldName);
         self::assertSame('Y-m-d H:i:s.u', $schema->updatedAtFieldFormat);
+        self::assertSame('revision', $schema->revisionFieldName);
     }
 
     #[Test]
@@ -40,6 +41,7 @@ final class SagaTableSchemaFactoryTest extends TestCase
             'custom_created_at_format',
             'custom_updated_at',
             'custom_updated_at_format',
+            'custom_revision',
         );
 
         self::assertSame('custom_saga_store', $schema->tableName);
@@ -50,6 +52,7 @@ final class SagaTableSchemaFactoryTest extends TestCase
         self::assertSame('custom_created_at_format', $schema->createdAtFieldFormat);
         self::assertSame('custom_updated_at', $schema->updatedAtFieldName);
         self::assertSame('custom_updated_at_format', $schema->updatedAtFieldFormat);
+        self::assertSame('custom_revision', $schema->revisionFieldName);
     }
 
     #[Test]
@@ -60,6 +63,7 @@ final class SagaTableSchemaFactoryTest extends TestCase
         self::assertSame('saga_store_relation', $schema->tableName);
         self::assertSame('id', $schema->idFieldName);
         self::assertSame('saga_id', $schema->sagaIdFieldName);
+        self::assertSame('saga_name', $schema->sagaNameFieldName);
     }
 
     #[Test]
@@ -69,31 +73,12 @@ final class SagaTableSchemaFactoryTest extends TestCase
             'custom_saga_store',
             'custom_id',
             'custom_saga_id',
+            'custom_saga_name',
         );
 
         self::assertSame('custom_saga_store', $schema->tableName);
         self::assertSame('custom_id', $schema->idFieldName);
         self::assertSame('custom_saga_id', $schema->sagaIdFieldName);
-    }
-
-    #[Test]
-    public function itShouldCreateDefaultSagaStoreLockTableSchema(): void
-    {
-        $schema = SagaTableSchemaFactory::createDefaultSagaStoreLock();
-
-        self::assertSame('saga_store_lock', $schema->tableName);
-        self::assertSame('boundary_hash', $schema->boundaryHashFieldName);
-    }
-
-    #[Test]
-    public function itShouldCreateCustomSagaStoreLockTableSchema(): void
-    {
-        $schema = SagaTableSchemaFactory::createDefaultSagaStoreLock(
-            'custom_saga_store_lock',
-            'custom_boundary_hash',
-        );
-
-        self::assertSame('custom_saga_store_lock', $schema->tableName);
-        self::assertSame('custom_boundary_hash', $schema->boundaryHashFieldName);
+        self::assertSame('custom_saga_name', $schema->sagaNameFieldName);
     }
 }

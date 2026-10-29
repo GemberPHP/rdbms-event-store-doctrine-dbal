@@ -14,6 +14,7 @@ final class V20251002194212 extends AbstractMigration
             ->addColumn('payload', 'json', ['null' => false])
             ->addColumn('created_at', 'timestamp', ['limit' => 6, 'null' => false])
             ->addColumn('updated_at', 'timestamp', ['limit' => 6, 'null' => true])
+            ->addColumn('revision', 'integer', ['null' => false, 'default' => 0])
             ->create();
     }
 }

@@ -11,6 +11,10 @@ use Doctrine\DBAL\Tools\DsnParser;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventStoreRepository;
+use Gember\DependencyContracts\Util\Generator\Identity\IdentityGenerator;
+use Gember\RdbmsEventStoreDoctrineDbal\Saga\DoctrineDbalRdbmsSagaFactory;
+use Gember\RdbmsEventStoreDoctrineDbal\Saga\DoctrineRdbmsSagaStoreRepository;
+use Gember\RdbmsEventStoreDoctrineDbal\Saga\TableSchema\SagaTableSchemaFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\TableSchema\TableSchemaFactory;
 
 /**
@@ -41,6 +45,23 @@ final class MySqlTestEnvironment
             TableSchemaFactory::createDefaultEventStoreRelation(),
             TableSchemaFactory::createDefaultEventStoreLock(),
             new DoctrineDbalRdbmsEventFactory(),
+        );
+    }
+
+    public static function createSagaRepository(Connection $connection): DoctrineRdbmsSagaStoreRepository
+    {
+        return new DoctrineRdbmsSagaStoreRepository(
+            $connection,
+            SagaTableSchemaFactory::createDefaultSagaStore(),
+            SagaTableSchemaFactory::createDefaultSagaStoreRelation(),
+            SagaTableSchemaFactory::createDefaultSagaStoreLock(),
+            new DoctrineDbalRdbmsSagaFactory(),
+            new class implements IdentityGenerator {
+                public function generate(): string
+                {
+                    return bin2hex(random_bytes(16));
+                }
+            },
         );
     }
 

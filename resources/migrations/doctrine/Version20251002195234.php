@@ -30,7 +30,7 @@ final class Version20251002195234 extends AbstractMigration
             CREATE TABLE `saga_store_relation` (
               `id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
               `saga_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-              `saga_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+              `saga_id` varchar(50) COLLATE utf8mb4_bin NOT NULL,
               PRIMARY KEY (`id`,`saga_id`),
               UNIQUE KEY `saga_name_saga_id` (`saga_name`,`saga_id`),
               CONSTRAINT `saga_store_relation_ibfk_1` FOREIGN KEY (`id`) REFERENCES `saga_store` (`id`)

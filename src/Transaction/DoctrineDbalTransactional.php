@@ -28,4 +28,10 @@ final readonly class DoctrineDbalTransactional implements Transactional
 
         return $this->connection->transactional(static fn() => $operation());
     }
+
+    #[Override]
+    public function isActive(): bool
+    {
+        return $this->connection->isTransactionActive();
+    }
 }

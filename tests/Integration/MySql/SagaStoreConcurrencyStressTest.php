@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Gember\RdbmsEventStoreDoctrineDbal\Test\Integration\MySql;
 
+use Doctrine\DBAL\Exception\DeadlockException;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -25,6 +26,22 @@ final class SagaStoreConcurrencyStressTest extends TestCase
     #[Test]
     public function itShouldNeverLoseSavedSagaChanges(): void
     {
+        $this->assertNoChangesLostUnderStress(outerTransaction: false);
+    }
+
+    /**
+     * Each worker loads and saves inside its own transaction, like an application wrapping the saga handler in a
+     * transaction. Under REPEATABLE READ the load reads from that transaction's snapshot; the save must still detect
+     * changes committed after it.
+     */
+    #[Test]
+    public function itShouldNeverLoseSavedSagaChangesInsideApplicationTransactions(): void
+    {
+        $this->assertNoChangesLostUnderStress(outerTransaction: true);
+    }
+
+    private function assertNoChangesLostUnderStress(bool $outerTransaction): void
+    {
         $dsn = MySqlTestEnvironment::getDsn();
 
         if ($dsn === null) {
@@ -40,7 +57,7 @@ final class SagaStoreConcurrencyStressTest extends TestCase
 
         try {
             for ($workerId = 1; $workerId <= self::WORKERS; ++$workerId) {
-                $processes[] = $this->spawnWorker([$workerId, self::SAGAS, self::ATTEMPTS_PER_WORKER, $startAt]);
+                $processes[] = $this->spawnWorker([$workerId, self::SAGAS, self::ATTEMPTS_PER_WORKER, $startAt, (int) $outerTransaction]);
             }
         } catch (RuntimeException $exception) {
             foreach ($processes as [$process]) {
@@ -53,8 +70,9 @@ final class SagaStoreConcurrencyStressTest extends TestCase
         /** @var array<string, list<string>> $savedPerSaga */
         $savedPerSaga = [];
 
-        /** @var array<string, int> $failures */
-        $failures = [];
+        /** @var array<string, int> $conflicts */
+        $conflicts = [];
+        $exhausted = 0;
 
         foreach ($processes as [$process, $stdout, $stderrFile]) {
             $output = (string) stream_get_contents($stdout);
@@ -63,25 +81,37 @@ final class SagaStoreConcurrencyStressTest extends TestCase
             $errors = (string) file_get_contents($stderrFile);
             unlink($stderrFile);
 
+            // Anything other than a concurrency conflict fails the worker
             self::assertSame(0, $exitCode, sprintf("Worker failed:\n%s\n%s", $output, $errors));
 
-            /** @var array{saved: array<string, list<string>>, failures: array<string, int>} $summary */
+            /** @var array{saved: array<string, list<string>>, conflicts: array<string, int>, exhausted: int} $summary */
             $summary = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
 
             foreach ($summary['saved'] as $sagaId => $entries) {
                 $savedPerSaga[$sagaId] = [...$savedPerSaga[$sagaId] ?? [], ...$entries];
             }
 
-            foreach ($summary['failures'] as $class => $count) {
-                $failures[$class] = ($failures[$class] ?? 0) + $count;
+            foreach ($summary['conflicts'] as $cause => $count) {
+                $conflicts[$cause] = ($conflicts[$cause] ?? 0) + $count;
             }
+
+            $exhausted += $summary['exhausted'];
         }
+
+        self::assertSame(0, $exhausted, 'Saves ran out of retries');
+        self::assertSame(
+            self::WORKERS * self::ATTEMPTS_PER_WORKER,
+            array_sum(array_map(count(...), $savedPerSaga)),
+            'Not every change was saved',
+        );
 
         $repository = MySqlTestEnvironment::createSagaRepository($connection);
 
         foreach ($savedPerSaga as $sagaId => $entries) {
+            $saga = $repository->get('course-waitlist', $sagaId);
+
             /** @var array{waitlist: list<string>} $state */
-            $state = json_decode($repository->get('course-waitlist', $sagaId)->payload, true, flags: JSON_THROW_ON_ERROR);
+            $state = json_decode($saga->payload, true, flags: JSON_THROW_ON_ERROR);
 
             $lost = array_values(array_diff($entries, $state['waitlist']));
 
@@ -91,6 +121,7 @@ final class SagaStoreConcurrencyStressTest extends TestCase
                 sprintf('Saga %s lost %d of %d saved changes', $sagaId, count($lost), count($entries)),
             );
             self::assertCount(count($entries), $state['waitlist'], sprintf('Saga %s has duplicate entries', $sagaId));
+            self::assertSame(count($entries) - 1, $saga->revision, sprintf('Saga %s has an unexpected revision', $sagaId));
         }
 
         $sagaRows = $connection->fetchOne("SELECT COUNT(*) FROM saga_store WHERE saga_name = 'course-waitlist'");
@@ -98,7 +129,11 @@ final class SagaStoreConcurrencyStressTest extends TestCase
 
         $connection->close();
 
-        self::assertNotSame([], $failures, 'Workers did not compete, the test proves nothing');
+        self::assertGreaterThan(0, $conflicts['revision'] ?? 0, 'Workers did not compete, the test proves nothing');
+
+        if (!$outerTransaction) {
+            self::assertArrayNotHasKey(DeadlockException::class, $conflicts, 'Deadlocks occurred between concurrent saves');
+        }
     }
 
     /**

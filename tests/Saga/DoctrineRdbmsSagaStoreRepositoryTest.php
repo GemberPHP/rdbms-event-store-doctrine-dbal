@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Tools\DsnParser;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaConcurrencyException;
+use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaIdAlreadyInUseException;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaNotFoundException;
 use Gember\RdbmsEventStoreDoctrineDbal\Saga\DoctrineDbalRdbmsSagaFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\Saga\DoctrineRdbmsSagaStoreRepository;
@@ -121,7 +122,7 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
     {
         $this->identityGenerator->ids[] = '01K7Q083CX4T7Z0NT5CKEX8NEJ';
 
-        $this->repository->save(
+        $created = $this->repository->save(
             'some.saga',
             '{"some":"data"}',
             new DateTimeImmutable('2025-10-10 12:00:34'),
@@ -134,7 +135,7 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
             'some.saga',
             '{"some":"updated"}',
             new DateTimeImmutable('2025-10-10 13:30:12'),
-            0,
+            $created,
             '01K76GDQ5RT71G7HQVNR264KD4',
             '01K7Q0JGY9ZMX11K75AAY5J78R',
         );
@@ -158,10 +159,13 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
         $this->repository->save('some.saga', '{"waitlist":[]}', new DateTimeImmutable(), null, 'course-1');
 
         // Two processes loaded revision 0; the first one saves
-        $this->repository->save('some.saga', '{"waitlist":["S1"]}', new DateTimeImmutable(), 0, 'course-1');
+        $loadedByFirst = $this->repository->get('some.saga', 'course-1');
+        $loadedBySecond = $this->repository->get('some.saga', 'course-1');
+
+        $this->repository->save('some.saga', '{"waitlist":["S1"]}', new DateTimeImmutable(), $loadedByFirst, 'course-1');
 
         try {
-            $this->repository->save('some.saga', '{"waitlist":["S2"]}', new DateTimeImmutable(), 0, 'course-1');
+            $this->repository->save('some.saga', '{"waitlist":["S2"]}', new DateTimeImmutable(), $loadedBySecond, 'course-1');
 
             self::fail('Expected RdbmsSagaConcurrencyException');
         } catch (RdbmsSagaConcurrencyException) {
@@ -174,7 +178,7 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldRejectCreatingSagaForSagaIdInUse(): void
+    public function itShouldRejectConcurrentCreationOfSameSagaAsRetryable(): void
     {
         $this->identityGenerator->ids = ['saga-1', 'saga-2'];
 
@@ -193,6 +197,25 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
     }
 
     #[Test]
+    public function itShouldRejectCreatingSagaWithSagaIdOfAnotherSaga(): void
+    {
+        $this->identityGenerator->ids = ['saga-1', 'saga-2'];
+
+        // A customer's first order saga owns customer-1; the second order saga also claims it
+        $this->repository->save('order.saga', '{"order":1}', new DateTimeImmutable(), null, 'order-1', 'customer-1');
+
+        try {
+            $this->repository->save('order.saga', '{"order":2}', new DateTimeImmutable(), null, 'order-2', 'customer-1');
+
+            self::fail('Expected RdbmsSagaIdAlreadyInUseException');
+        } catch (RdbmsSagaIdAlreadyInUseException $exception) {
+            self::assertStringContainsString('customer-1', $exception->getMessage());
+        }
+
+        self::assertEquals(1, $this->connection->fetchOne('SELECT COUNT(*) FROM saga_store'));
+    }
+
+    #[Test]
     public function itShouldAllowSameSagaIdForDifferentSagaNames(): void
     {
         $this->identityGenerator->ids = ['saga-1', 'saga-2'];
@@ -205,26 +228,57 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
     }
 
     #[Test]
-    public function itShouldRejectSagaIdThatBelongsToAnotherSaga(): void
+    public function itShouldRejectTakingOverSagaIdOfAnotherSagaWithoutChangingIt(): void
     {
-        $this->identityGenerator->ids = ['saga-1', 'saga-2'];
+        $this->identityGenerator->ids = ['saga-a', 'saga-b'];
 
-        $this->repository->save('some.saga', '{"saga":"a"}', new DateTimeImmutable(), null, 'order-1');
-        $this->repository->save('some.saga', '{"saga":"b"}', new DateTimeImmutable(), null, 'payment-1');
+        $sagaA = $this->repository->save('some.saga', '{"saga":"a"}', new DateTimeImmutable(), null, 'z-order');
+        $this->repository->save('some.saga', '{"saga":"b"}', new DateTimeImmutable(), null, 'a-payment');
 
+        // Saga A (revision 0) takes over a-payment, which belongs to saga B (also revision 0)
         try {
-            // Saga A claims payment-1, which belongs to saga B
-            $this->repository->save('some.saga', '{"saga":"a2"}', new DateTimeImmutable(), 0, 'order-1', 'payment-1');
+            $this->repository->save('some.saga', '{"saga":"a2"}', new DateTimeImmutable(), $sagaA, 'a-payment');
 
-            self::fail('Expected RdbmsSagaConcurrencyException');
-        } catch (RdbmsSagaConcurrencyException) {
+            self::fail('Expected RdbmsSagaIdAlreadyInUseException');
+        } catch (RdbmsSagaIdAlreadyInUseException) {
         }
 
-        $sagaA = $this->repository->get('some.saga', 'order-1');
+        $sagaB = $this->repository->get('some.saga', 'a-payment');
 
-        self::assertSame('{"saga":"a"}', $sagaA->payload);
-        self::assertSame(['order-1'], $sagaA->sagaIds);
-        self::assertSame(0, $sagaA->revision);
+        self::assertSame('saga-b', $sagaB->id);
+        self::assertSame('{"saga":"b"}', $sagaB->payload);
+        self::assertSame(0, $sagaB->revision);
+        self::assertSame('{"saga":"a"}', $this->repository->get('some.saga', 'z-order')->payload);
+    }
+
+    #[Test]
+    public function itShouldReplaceAllSagaIds(): void
+    {
+        $this->identityGenerator->ids[] = 'saga-1';
+
+        $created = $this->repository->save('some.saga', '{"step":1}', new DateTimeImmutable(), null, 'order-1');
+        $this->repository->save('some.saga', '{"step":2}', new DateTimeImmutable(), $created, 'order-2');
+
+        $saga = $this->repository->get('some.saga', 'order-2');
+
+        self::assertSame('saga-1', $saga->id);
+        self::assertSame(['order-2'], $saga->sagaIds);
+        self::assertSame(1, $saga->revision);
+
+        self::expectException(RdbmsSagaNotFoundException::class);
+
+        $this->repository->get('some.saga', 'order-1');
+    }
+
+    #[Test]
+    public function itShouldIgnoreDuplicateSagaIdValues(): void
+    {
+        $this->identityGenerator->ids[] = 'saga-1';
+
+        $saga = $this->repository->save('some.saga', '{}', new DateTimeImmutable(), null, 'same-id', 'same-id');
+
+        self::assertSame(['same-id'], $saga->sagaIds);
+        self::assertSame(['same-id'], $this->repository->get('some.saga', 'same-id')->sagaIds);
     }
 
     #[Test]

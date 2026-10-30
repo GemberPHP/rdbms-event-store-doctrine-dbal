@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Gember\RdbmsEventStoreDoctrineDbal\Outbox;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Platforms\Exception\NotSupported;
 use Doctrine\DBAL\Query\ForUpdate\ConflictResolutionMode;
+use Doctrine\DBAL\Query\QueryBuilder;
 use Gember\DependencyContracts\Outbox\Rdbms\RdbmsOutboxMessage;
 use Gember\DependencyContracts\Outbox\Rdbms\RdbmsOutboxRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\TableSchema\OutboxTableSchema;
@@ -28,65 +30,35 @@ use Throwable;
  */
 final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRepository
 {
-    /**
-     * Identifies this processor in the messages it claims (host, process and a random part).
-     */
-    private string $claimant;
+    private string $host;
+    private string $instance;
 
     /**
      * @param int $leaseSeconds How long claimed messages are reserved for this processor. Must exceed the time to
-     *                          dispatch a batch: after it, other processors take the messages over.
+     *                          dispatch a batch: after it, other processors take the messages over. Measured with the
+     *                          database clock, so all processors share one clock.
+     * @param string|null $claimant Identifies this processor in its claims; defaults to host, process and a random part
      */
     public function __construct(
         private Connection $connection,
         private OutboxTableSchema $tableSchema,
         private DoctrineDbalRdbmsOutboxFactory $outboxFactory,
         private int $leaseSeconds = 300,
-        ?string $claimant = null,
+        private ?string $claimant = null,
     ) {
-        $this->claimant = $claimant ?? substr(
-            sprintf('%s:%d:%s', gethostname() ?: 'unknown', getmypid() ?: 0, bin2hex(random_bytes(4))),
-            -100,
-        );
+        $this->host = gethostname() ?: 'unknown';
+        $this->instance = bin2hex(random_bytes(4));
     }
 
     /**
      * Claims up to $limit unprocessed messages for this processor until the lease expires, so concurrent processors
-     * don't get them, and returns them. Dispatching happens after the claim is committed, outside any transaction.
+     * don't get them, and returns them. Run it outside any transaction: the claim is then committed before returning,
+     * and the messages are dispatched outside a transaction.
      */
     #[Override]
     public function getUnprocessedMessages(int $limit): array
     {
-        $now = new DateTimeImmutable();
-        $claimedUntil = $now->modify(sprintf('+%d seconds', $this->leaseSeconds));
-
-        $ownsTransaction = !$this->connection->isTransactionActive();
-
-        if ($ownsTransaction) {
-            $this->connection->beginTransaction();
-        }
-
-        try {
-            $messageIds = $this->findClaimableMessageIds($limit, $now);
-
-            if ($messageIds !== []) {
-                $this->claim($messageIds, $now, $claimedUntil);
-            }
-
-            if ($ownsTransaction) {
-                $this->connection->commit();
-            }
-        } catch (Throwable $exception) {
-            if ($ownsTransaction) {
-                try {
-                    $this->connection->rollBack();
-                } catch (Throwable) {
-                    // Rethrow the original exception rather than masking it with the rollback failure
-                }
-            }
-
-            throw $exception;
-        }
+        $messageIds = $this->claim($limit);
 
         if ($messageIds === []) {
             return [];
@@ -94,6 +66,7 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
 
         $schema = $this->tableSchema;
 
+        // By id (primary key): the messages of this claim that this processor still holds
         /** @var list<OutboxRow> $rows */
         $rows = $this->connection->createQueryBuilder()
             ->select(
@@ -107,12 +80,14 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
                 DQL
             )
             ->from($schema->tableName)
-            ->where(sprintf('%s = :claimant', $schema->claimedByFieldName))
-            ->andWhere(sprintf('%s = :claimedUntil', $schema->claimedUntilFieldName))
+            ->where(sprintf('%s IN (:ids)', $schema->idFieldName))
+            ->andWhere(sprintf('%s = :claimant', $schema->claimedByFieldName))
+            ->andWhere(sprintf('%s IS NULL', $schema->processedAtFieldName))
+            ->andWhere(sprintf('%s IS NULL', $schema->deadLetteredAtFieldName))
             ->orderBy($schema->createdAtFieldName, 'asc')
             ->addOrderBy($schema->idFieldName, 'asc')
-            ->setParameter('claimant', $this->claimant)
-            ->setParameter('claimedUntil', $claimedUntil->format($schema->claimedUntilFieldFormat))
+            ->setParameter('ids', $messageIds, ArrayParameterType::STRING)
+            ->setParameter('claimant', $this->claimant())
             ->executeQuery()
             ->fetchAllAssociative();
 
@@ -171,7 +146,7 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
 
     /**
      * Counts a failed dispatch of messages claimed by this processor and releases them, so they are retried. A failure
-     * of a message another processor took over (after the lease expired) is left to that processor.
+     * of a message another processor took over (after the lease expired), or that was delivered meanwhile, is ignored.
      */
     #[Override]
     public function incrementRetryCount(int $maxRetries, string ...$messageIds): void
@@ -197,70 +172,151 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
             ->set($schema->claimedUntilFieldName, 'NULL')
             ->where(sprintf('%s IN (:ids)', $schema->idFieldName))
             ->andWhere(sprintf('%s = :claimant', $schema->claimedByFieldName))
+            ->andWhere(sprintf('%s IS NULL', $schema->processedAtFieldName))
             ->setParameter('maxRetries', $maxRetries, ParameterType::INTEGER)
             ->setParameter('now', (new DateTimeImmutable())->format($schema->deadLetteredAtFieldFormat))
             ->setParameter('ids', array_values($messageIds), ArrayParameterType::STRING)
-            ->setParameter('claimant', $this->claimant)
+            ->setParameter('claimant', $this->claimant())
             ->executeStatement();
     }
 
     /**
-     * Unprocessed messages that aren't claimed (or whose claim expired), oldest first. Where supported, rows another
-     * processor is claiming right now are skipped (SKIP LOCKED), so concurrent processors take different messages.
-     * Without it, the guarded claim alone keeps them from taking the same ones.
+     * Claims up to $limit messages and returns the ids of the candidates.
+     *
+     * Correctness comes from the guarded claim update alone: of two processors claiming the same message, the update of
+     * the second one no longer matches it. Where SKIP LOCKED is supported, the candidates are selected and claimed in a
+     * short transaction that skips rows other processors are claiming, so concurrent processors take different
+     * messages. Without it (SQLite, MySQL 5.7, MariaDB < 10.6), both statements run on their own: a transaction would
+     * add nothing there, and SQLite would reject concurrent claim transactions as "database is locked".
      *
      * @return list<string>
      */
-    private function findClaimableMessageIds(int $limit, DateTimeImmutable $now): array
+    private function claim(int $limit): array
+    {
+        $candidates = $this->createCandidateQuery($limit);
+
+        try {
+            $candidates->forUpdate(ConflictResolutionMode::SKIP_LOCKED)->getSQL();
+        } catch (NotSupported) {
+            $messageIds = $this->fetchIds($this->createCandidateQuery($limit));
+
+            if ($messageIds !== []) {
+                $this->claimCandidates($messageIds);
+            }
+
+            return $messageIds;
+        }
+
+        $ownsTransaction = !$this->connection->isTransactionActive();
+
+        if ($ownsTransaction) {
+            // Lock only the selected rows: under REPEATABLE READ the scan would also gap-lock the end of the
+            // unprocessed range, blocking new outbox rows (any command) for as long as the claim takes
+            if ($this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+                $this->connection->executeStatement('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+            }
+
+            $this->connection->beginTransaction();
+        }
+
+        try {
+            $messageIds = $this->fetchIds($candidates);
+
+            if ($messageIds !== []) {
+                $this->claimCandidates($messageIds);
+            }
+
+            if ($ownsTransaction) {
+                $this->connection->commit();
+            }
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                try {
+                    $this->connection->rollBack();
+                } catch (Throwable) {
+                    // Rethrow the original exception rather than masking it with the rollback failure
+                }
+            }
+
+            throw $exception;
+        }
+
+        return $messageIds;
+    }
+
+    /**
+     * Unprocessed messages that aren't claimed (or whose claim expired), oldest first.
+     */
+    private function createCandidateQuery(int $limit): QueryBuilder
     {
         $schema = $this->tableSchema;
 
-        $queryBuilder = $this->connection->createQueryBuilder()
+        return $this->connection->createQueryBuilder()
             ->select(sprintf('%s as id', $schema->idFieldName))
             ->from($schema->tableName)
             ->where(sprintf('%s IS NULL', $schema->processedAtFieldName))
             ->andWhere(sprintf('%s IS NULL', $schema->deadLetteredAtFieldName))
-            ->andWhere(sprintf('(%1$s IS NULL OR %1$s < :now)', $schema->claimedUntilFieldName))
+            ->andWhere($this->claimExpired())
             ->orderBy($schema->createdAtFieldName, 'asc')
             ->addOrderBy($schema->idFieldName, 'asc')
-            ->setParameter('now', $now->format($schema->claimedUntilFieldFormat))
             ->setMaxResults($limit);
-
-        try {
-            /** @var list<string> */
-            return (clone $queryBuilder)
-                ->forUpdate(ConflictResolutionMode::SKIP_LOCKED)
-                ->executeQuery()
-                ->fetchFirstColumn();
-        } catch (NotSupported) {
-            // E.g. SQLite, MySQL 5.7 or MariaDB < 10.6
-            /** @var list<string> */
-            return $queryBuilder->executeQuery()->fetchFirstColumn();
-        }
     }
 
     /**
-     * Claims the messages that are still claimable: of two processors claiming the same message, the update of the
-     * second one no longer matches it (the condition is evaluated against the latest committed row).
-     *
      * @param list<string> $messageIds
      */
-    private function claim(array $messageIds, DateTimeImmutable $now, DateTimeImmutable $claimedUntil): void
+    private function claimCandidates(array $messageIds): void
     {
         $schema = $this->tableSchema;
+        $platform = $this->connection->getDatabasePlatform();
 
+        // The conditions are evaluated against the latest committed row: a message claimed, processed or
+        // dead-lettered since it was selected isn't claimed again
         $this->connection->createQueryBuilder()
             ->update($schema->tableName)
             ->set($schema->claimedByFieldName, ':claimant')
-            ->set($schema->claimedUntilFieldName, ':claimedUntil')
+            ->set(
+                $schema->claimedUntilFieldName,
+                $platform->getDateAddSecondsExpression($platform->getCurrentTimestampSQL(), (string) $this->leaseSeconds),
+            )
             ->where(sprintf('%s IN (:ids)', $schema->idFieldName))
             ->andWhere(sprintf('%s IS NULL', $schema->processedAtFieldName))
             ->andWhere(sprintf('%s IS NULL', $schema->deadLetteredAtFieldName))
-            ->andWhere(sprintf('(%1$s IS NULL OR %1$s < :now)', $schema->claimedUntilFieldName))
-            ->setParameter('claimant', $this->claimant)
-            ->setParameter('claimedUntil', $claimedUntil->format($schema->claimedUntilFieldFormat))
-            ->setParameter('now', $now->format($schema->claimedUntilFieldFormat))
+            ->andWhere($this->claimExpired())
+            ->setParameter('claimant', $this->claimant())
             ->setParameter('ids', $messageIds, ArrayParameterType::STRING)
             ->executeStatement();
+    }
+
+    /**
+     * Not claimed, or the lease expired (by the database clock).
+     */
+    private function claimExpired(): string
+    {
+        return sprintf(
+            '(%1$s IS NULL OR %1$s <= %2$s)',
+            $this->tableSchema->claimedUntilFieldName,
+            $this->connection->getDatabasePlatform()->getCurrentTimestampSQL(),
+        );
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function fetchIds(QueryBuilder $queryBuilder): array
+    {
+        /** @var list<string> */
+        return $queryBuilder->executeQuery()->fetchFirstColumn();
+    }
+
+    /**
+     * The process id is read when claiming, so processes forked after construction claim as different processors.
+     */
+    private function claimant(): string
+    {
+        return $this->claimant ?? substr(
+            sprintf('%s:%d:%s', $this->host, getmypid() ?: 0, $this->instance),
+            -100,
+        );
     }
 }

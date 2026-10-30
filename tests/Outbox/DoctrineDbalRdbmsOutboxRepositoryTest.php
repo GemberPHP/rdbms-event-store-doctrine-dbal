@@ -82,10 +82,8 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
 
         $this->repository->markAsProcessed('msg-1');
 
-        $messages = $this->repository->getUnprocessedMessages(10);
-
-        self::assertCount(1, $messages);
-        self::assertSame('msg-2', $messages[0]->id);
+        // A batch of one: a processed message must not take the place of an unprocessed one
+        self::assertSame(['msg-2'], $this->ids($this->repository->getUnprocessedMessages(1)));
     }
 
     #[Test]
@@ -158,9 +156,8 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
         // 2nd increment: retry_count 1→2, dead-lettered (2>1=true)
         $repository->incrementRetryCount(1, 'msg-1');
 
-        $messages = $repository->getUnprocessedMessages(10);
-        self::assertCount(1, $messages);
-        self::assertSame('msg-2', $messages[0]->id);
+        // A batch of one: a dead-lettered message must not take the place of an unprocessed one
+        self::assertSame(['msg-2'], $this->ids($repository->getUnprocessedMessages(1)));
     }
 
     #[Test]
@@ -173,7 +170,8 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
         $second = $this->createRepository('processor-2');
 
         self::assertSame(['msg-1'], $this->ids($first->getUnprocessedMessages(1)));
-        self::assertSame(['msg-2'], $this->ids($second->getUnprocessedMessages(10)));
+        // A batch of one: a message claimed by another processor must not take the place of an unclaimed one
+        self::assertSame(['msg-2'], $this->ids($second->getUnprocessedMessages(1)));
         self::assertSame([], $first->getUnprocessedMessages(10));
     }
 
@@ -234,6 +232,45 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
 
         self::assertNotNull($this->row('msg-1', 'processed_at')['processed_at']);
         self::assertSame([], $this->createRepository('processor-3', leaseSeconds: 0)->getUnprocessedMessages(10));
+    }
+
+    #[Test]
+    public function itShouldNotCountFailureOfMessageDeliveredMeanwhile(): void
+    {
+        $this->repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
+
+        $slow = $this->createRepository('processor-1', leaseSeconds: 0);
+        $other = $this->createRepository('processor-2');
+
+        $slow->getUnprocessedMessages(10);
+        $other->getUnprocessedMessages(10);
+
+        // The slow processor delivered it after all; the other processor's dispatch failed (e.g. not idempotent)
+        $slow->markAsProcessed('msg-1');
+        $other->incrementRetryCount(0, 'msg-1');
+
+        self::assertSame(['retry_count' => 0, 'dead_lettered_at' => null], $this->row('msg-1', 'retry_count', 'dead_lettered_at'));
+    }
+
+    #[Test]
+    public function itShouldMeasureTheLeaseWithTheDatabaseClock(): void
+    {
+        $this->repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
+
+        $first = $this->createRepository('processor-1');
+        $second = $this->createRepository('processor-2');
+
+        self::assertSame(['msg-1'], $this->ids($first->getUnprocessedMessages(10)));
+
+        // A processor whose PHP time zone is hours ahead doesn't see the claim as expired
+        $timezone = date_default_timezone_get();
+        date_default_timezone_set('Pacific/Kiritimati');
+
+        try {
+            self::assertSame([], $second->getUnprocessedMessages(10));
+        } finally {
+            date_default_timezone_set($timezone);
+        }
     }
 
     #[Test]

@@ -6,6 +6,7 @@ namespace Gember\RdbmsEventStoreDoctrineDbal\Test\Integration\MySql;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception as DbalException;
 use Gember\DependencyContracts\Outbox\Rdbms\RdbmsOutboxMessage;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxRepository;
@@ -94,11 +95,41 @@ final class OutboxConcurrencyTest extends TestCase
         );
     }
 
-    private function createRepository(Connection $connection, string $claimant, int $leaseSeconds = 300): DoctrineDbalRdbmsOutboxRepository
+    #[Test]
+    public function itShouldRollBackTheClaimWhenItFails(): void
     {
+        $repository = $this->createRepository($this->connectionA, 'processor-a', claimedByFieldName: 'missing_column');
+
+        try {
+            $repository->getUnprocessedMessages(10);
+
+            self::fail('Expected the claim to fail');
+        } catch (DbalException) {
+        }
+
+        self::assertFalse($this->connectionA->isTransactionActive());
+        self::assertSame(0, $this->connectionA->getTransactionNestingLevel());
+    }
+
+    #[Test]
+    public function itShouldClaimWithoutChangingTheIsolationLevelOfTheConnection(): void
+    {
+        $this->createRepository($this->connectionA, 'processor-a')->getUnprocessedMessages(10);
+
+        $this->connectionA->beginTransaction();
+
+        self::assertSame('REPEATABLE-READ', $this->connectionA->fetchOne('SELECT @@transaction_isolation'));
+    }
+
+    private function createRepository(
+        Connection $connection,
+        string $claimant,
+        int $leaseSeconds = 300,
+        string $claimedByFieldName = 'claimed_by',
+    ): DoctrineDbalRdbmsOutboxRepository {
         return new DoctrineDbalRdbmsOutboxRepository(
             $connection,
-            OutboxTableSchemaFactory::createDefault(),
+            OutboxTableSchemaFactory::createDefault(claimedByFieldName: $claimedByFieldName),
             new DoctrineDbalRdbmsOutboxFactory(),
             $leaseSeconds,
             $claimant,

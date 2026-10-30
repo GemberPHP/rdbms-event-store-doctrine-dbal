@@ -52,6 +52,17 @@ final class EventStoreConcurrencyStressTest extends TestCase
         $this->assertCapacityHoldsUnderStress(courses: 3, capacity: 5, students: 12, skewMs: 0, outerTransaction: true, allowDeadlocks: true);
     }
 
+    /**
+     * Writers use the same course id in different spellings (course-1 / COURSE-1). Every stream, as the event store
+     * loads and counts it, must stay within capacity: writers whose streams contain each other's events must lock each
+     * other out.
+     */
+    #[Test]
+    public function itShouldNeverExceedCapacityWhenTagsDifferOnlyInCase(): void
+    {
+        $this->assertCapacityHoldsUnderStress(courses: 1, capacity: 5, students: 0, skewMs: 0, caseVariants: true);
+    }
+
     private function assertCapacityHoldsUnderStress(
         int $courses,
         int $capacity,
@@ -59,6 +70,7 @@ final class EventStoreConcurrencyStressTest extends TestCase
         int $skewMs,
         bool $outerTransaction = false,
         bool $allowDeadlocks = false,
+        bool $caseVariants = false,
     ): void {
         $dsn = MySqlTestEnvironment::getDsn();
 
@@ -75,7 +87,7 @@ final class EventStoreConcurrencyStressTest extends TestCase
 
         try {
             for ($workerId = 1; $workerId <= self::WORKERS; ++$workerId) {
-                $processes[] = $this->spawnWorker([$workerId, $courses, $capacity, self::ATTEMPTS_PER_WORKER, $startAt, $students, $skewMs, (int) $outerTransaction]);
+                $processes[] = $this->spawnWorker([$workerId, $courses, $capacity, self::ATTEMPTS_PER_WORKER, $startAt, $students, $skewMs, (int) $outerTransaction, (int) $caseVariants]);
             }
         } catch (RuntimeException $exception) {
             foreach ($processes as [$process]) {
@@ -105,20 +117,24 @@ final class EventStoreConcurrencyStressTest extends TestCase
             $lockWaitTimeouts += $summary['lockWaitTimeouts'];
         }
 
+        // Grouped as the event store compares tags (the column's collation): one row per stream
         /** @var list<array{domain_tag: string, subscriptions: int|string}> $rows */
         $rows = $connection->fetchAllAssociative(
             <<<'SQL'
                 SELECT esr.domain_tag, COUNT(*) AS subscriptions
                 FROM event_store es
                 JOIN event_store_relation esr ON es.id = esr.event_id
-                WHERE es.event_name = 'StudentSubscribed' AND esr.domain_tag LIKE 'course-%'
+                WHERE es.event_name = 'StudentSubscribed' AND LOWER(esr.domain_tag) LIKE 'course-%'
                 GROUP BY esr.domain_tag
                 SQL,
         );
 
         $connection->close();
 
-        self::assertCount($courses, $rows);
+        // With case variants, each spelling is a stream of its own once tags are compared exactly
+        if (!$caseVariants) {
+            self::assertCount($courses, $rows);
+        }
 
         foreach ($rows as $row) {
             self::assertSame(

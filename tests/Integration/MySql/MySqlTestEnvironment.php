@@ -11,6 +11,9 @@ use Doctrine\DBAL\Tools\DsnParser;
 use Gember\DependencyContracts\EventStore\Rdbms\RdbmsEvent;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\DoctrineDbalRdbmsEventStoreRepository;
+use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxFactory;
+use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxRepository;
+use Gember\RdbmsEventStoreDoctrineDbal\Outbox\TableSchema\OutboxTableSchemaFactory;
 use Gember\DependencyContracts\Util\Generator\Identity\IdentityGenerator;
 use Gember\RdbmsEventStoreDoctrineDbal\Saga\DoctrineDbalRdbmsSagaFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\Saga\DoctrineRdbmsSagaStoreRepository;
@@ -61,6 +64,15 @@ final class MySqlTestEnvironment
                     return bin2hex(random_bytes(16));
                 }
             },
+        );
+    }
+
+    public static function createOutboxRepository(Connection $connection): DoctrineDbalRdbmsOutboxRepository
+    {
+        return new DoctrineDbalRdbmsOutboxRepository(
+            $connection,
+            OutboxTableSchemaFactory::createDefault(),
+            new DoctrineDbalRdbmsOutboxFactory(),
         );
     }
 

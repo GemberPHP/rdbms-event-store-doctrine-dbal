@@ -19,5 +19,8 @@ final readonly class OutboxTableSchema
         public string $retryCountFieldName,
         public string $deadLetteredAtFieldName,
         public string $deadLetteredAtFieldFormat,
+        public string $claimedByFieldName = 'claimed_by',
+        public string $claimedUntilFieldName = 'claimed_until',
+        public string $claimedUntilFieldFormat = 'Y-m-d H:i:s.u',
     ) {}
 }

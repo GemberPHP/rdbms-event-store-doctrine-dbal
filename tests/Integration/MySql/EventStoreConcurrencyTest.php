@@ -184,6 +184,25 @@ final class EventStoreConcurrencyTest extends TestCase
     }
 
     #[Test]
+    public function itShouldTreatTagsDifferingOnlyInCaseAsSeparateStreams(): void
+    {
+        $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 0, [
+            MySqlTestEnvironment::event('event-1', ['course-1'], 'StudentSubscribed'),
+        ]);
+
+        // Locks are taken per exact tag, so loading and counting must compare tags exactly too
+        self::assertSame([], $this->repositoryB->getEvents(['COURSE-1'], self::SUBSCRIBE_EVENT_NAMES));
+        self::assertSame(0, $this->repositoryB->countEvents(['COURSE-1'], self::SUBSCRIBE_EVENT_NAMES));
+
+        $this->repositoryB->saveEvents(['COURSE-1'], self::SUBSCRIBE_EVENT_NAMES, 0, [
+            MySqlTestEnvironment::event('event-2', ['COURSE-1'], 'StudentSubscribed'),
+        ]);
+
+        self::assertSame(['event-1'], array_map(fn($event) => $event->eventId, $this->repositoryA->getEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES)));
+        self::assertSame(['event-2'], array_map(fn($event) => $event->eventId, $this->repositoryB->getEvents(['COURSE-1'], self::SUBSCRIBE_EVENT_NAMES)));
+    }
+
+    #[Test]
     public function itShouldKeepLockRowsWhenOwnedTransactionRollsBack(): void
     {
         $this->repositoryA->saveEvents(['course-1'], self::SUBSCRIBE_EVENT_NAMES, 0, [

@@ -258,6 +258,53 @@ final class DoctrineRdbmsSagaStoreRepositoryTest extends TestCase
     }
 
     #[Test]
+    public function itShouldNameTheTakenSagaIdWhenKeepingItsOwnSagaIds(): void
+    {
+        $this->identityGenerator->ids = ['saga-a', 'saga-b'];
+
+        $sagaA = $this->repository->save('some.saga', '{"saga":"a"}', new DateTimeImmutable(), null, 'a-own');
+        $this->repository->save('some.saga', '{"saga":"b"}', new DateTimeImmutable(), null, 'b-taken');
+
+        try {
+            $this->repository->save('some.saga', '{"saga":"a2"}', new DateTimeImmutable(), $sagaA, 'a-own', 'b-taken');
+
+            self::fail('Expected RdbmsSagaIdAlreadyInUseException');
+        } catch (RdbmsSagaIdAlreadyInUseException $exception) {
+            self::assertStringContainsString('b-taken', $exception->getMessage());
+            self::assertStringNotContainsString('a-own', $exception->getMessage());
+        }
+    }
+
+    #[Test]
+    public function itShouldOnlyUpdateTheSagaItWasLoadedFrom(): void
+    {
+        $this->identityGenerator->ids = ['saga-a', 'saga-b'];
+
+        $sagaA = $this->repository->save('some.saga', '{"saga":"a"}', new DateTimeImmutable(), null, 'a-1');
+        $this->repository->save('some.saga', '{"saga":"b"}', new DateTimeImmutable(), null, 'b-1');
+
+        $this->repository->save('some.saga', '{"saga":"a2"}', new DateTimeImmutable(), $sagaA, 'a-1');
+
+        $sagaB = $this->repository->get('some.saga', 'b-1');
+
+        self::assertSame('{"saga":"b"}', $sagaB->payload);
+        self::assertSame(0, $sagaB->revision);
+    }
+
+    #[Test]
+    public function itShouldOnlyRemoveSagaIdsOfTheSagaItself(): void
+    {
+        $this->identityGenerator->ids = ['saga-a', 'saga-b'];
+
+        $sagaA = $this->repository->save('some.saga', '{"saga":"a"}', new DateTimeImmutable(), null, 'order-1');
+        $this->repository->save('other.saga', '{"saga":"b"}', new DateTimeImmutable(), null, 'order-1');
+
+        $this->repository->save('some.saga', '{"saga":"a2"}', new DateTimeImmutable(), $sagaA, 'order-2');
+
+        self::assertSame(['order-1'], $this->repository->get('other.saga', 'order-1')->sagaIds);
+    }
+
+    #[Test]
     public function itShouldReplaceAllSagaIds(): void
     {
         $this->identityGenerator->ids[] = 'saga-1';

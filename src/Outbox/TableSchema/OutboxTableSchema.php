@@ -21,6 +21,5 @@ final readonly class OutboxTableSchema
         public string $deadLetteredAtFieldFormat,
         public string $claimedByFieldName = 'claimed_by',
         public string $claimedUntilFieldName = 'claimed_until',
-        public string $claimedUntilFieldFormat = 'Y-m-d H:i:s.u',
     ) {}
 }

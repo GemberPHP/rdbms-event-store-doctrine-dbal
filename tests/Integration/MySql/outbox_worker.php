@@ -9,7 +9,8 @@ declare(strict_types=1);
  * record it in outbox_dispatch_log, then a little handler work) and mark it as processed, until every message is
  * processed (polling again after an empty batch, as the other processors may hold the remaining messages).
  *
- * Usage: php outbox_worker.php <workerId> <batchSize> <startAt> [<withoutSkipLocked>]
+ * Usage: php outbox_worker.php <workerId> <batchSize> <startAt> [<withoutSkipLocked> [<dsn>]]
+ * <dsn> overrides GEMBER_MYSQL_DSN (e.g. a SQLite file, see OutboxSqliteConcurrencyTest).
  * With <withoutSkipLocked> 1, the connection declares MySQL 5.7, which has no SKIP LOCKED: processors then only rely on
  * the guarded claim (as on SQLite, MySQL 5.7 or MariaDB < 10.6).
  * Prints a JSON summary to stdout: the number of messages this worker dispatched.
@@ -19,7 +20,7 @@ use Gember\RdbmsEventStoreDoctrineDbal\Test\Integration\MySql\MySqlTestEnvironme
 
 require __DIR__ . '/../../../vendor/autoload.php';
 
-$dsn = MySqlTestEnvironment::getDsn() ?? throw new RuntimeException('Missing ' . MySqlTestEnvironment::DSN_ENV);
+$dsn = $argv[5] ?? MySqlTestEnvironment::getDsn() ?? throw new RuntimeException('Missing ' . MySqlTestEnvironment::DSN_ENV);
 
 /** @var list<string> $argv */
 [, $workerId, $batchSize] = array_map(intval(...), $argv);
@@ -38,8 +39,17 @@ if ($startAt > microtime(true)) {
 }
 
 $dispatched = 0;
+$deadline = microtime(true) + 60;
 
 while (true) {
+    // Fail instead of hanging when messages are never handed out (e.g. claimed but not returned)
+    if (microtime(true) > $deadline) {
+        $unprocessed = $connection->fetchOne('SELECT COUNT(*) FROM outbox WHERE processed_at IS NULL');
+        fwrite(STDERR, sprintf('Gave up after 60 s with %s messages unprocessed', is_scalar($unprocessed) ? $unprocessed : '?'));
+
+        exit(1);
+    }
+
     $messages = $repository->getUnprocessedMessages($batchSize);
 
     if ($messages === []) {

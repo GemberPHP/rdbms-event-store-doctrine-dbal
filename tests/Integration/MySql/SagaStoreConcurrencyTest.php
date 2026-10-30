@@ -7,6 +7,7 @@ namespace Gember\RdbmsEventStoreDoctrineDbal\Test\Integration\MySql;
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaConcurrencyException;
+use Gember\DependencyContracts\EventStore\Saga\RdbmsSagaIdAlreadyInUseException;
 use Gember\RdbmsEventStoreDoctrineDbal\Saga\DoctrineRdbmsSagaStoreRepository;
 use Override;
 use PHPUnit\Framework\Attributes\Group;
@@ -103,5 +104,55 @@ final class SagaStoreConcurrencyTest extends TestCase
 
         self::assertSame(['waitlist' => ['S1']], json_decode($this->repositoryA->get('course-waitlist', 'course-1')->payload, true));
         self::assertEquals(1, $this->connectionA->fetchOne('SELECT COUNT(*) FROM saga_store'));
+    }
+
+    #[Test]
+    public function itShouldTreatTakenSagaIdAsConcurrentWhenItsOwnerIsNotVisibleInTheTransaction(): void
+    {
+        $this->repositoryA->save('order', '{"saga":"s"}', new DateTimeImmutable(), null, 'own-1');
+
+        // B's application transaction loads saga S (its snapshot is taken here)
+        $this->connectionB->beginTransaction();
+        $loadedByB = $this->repositoryB->get('order', 'own-1');
+
+        // Another saga takes x-1 and commits after B's snapshot
+        $this->repositoryA->save('order', '{"saga":"z"}', new DateTimeImmutable(), null, 'x-1');
+
+        try {
+            $this->repositoryB->save('order', '{"saga":"s2"}', new DateTimeImmutable(), $loadedByB, 'own-1', 'x-1');
+
+            self::fail('Expected RdbmsSagaConcurrencyException');
+        } catch (RdbmsSagaConcurrencyException) {
+            // The owner of x-1 isn't visible in B's snapshot: retrying in a new transaction tells
+            $this->connectionB->rollBack();
+        }
+
+        try {
+            $this->repositoryB->save('order', '{"saga":"s2"}', new DateTimeImmutable(), $this->repositoryB->get('order', 'own-1'), 'own-1', 'x-1');
+
+            self::fail('Expected RdbmsSagaIdAlreadyInUseException');
+        } catch (RdbmsSagaIdAlreadyInUseException $exception) {
+            self::assertStringContainsString('x-1', $exception->getMessage());
+        }
+    }
+
+    #[Test]
+    public function itShouldCompareSagaIdsCaseSensitively(): void
+    {
+        $this->repositoryA->save('order', '{"saga":"lower"}', new DateTimeImmutable(), null, 'order-abc');
+        $this->repositoryA->save('order', '{"saga":"upper"}', new DateTimeImmutable(), null, 'ORDER-ABC');
+
+        self::assertSame(['saga' => 'lower'], json_decode($this->repositoryA->get('order', 'order-abc')->payload, true));
+        self::assertSame(['saga' => 'upper'], json_decode($this->repositoryA->get('order', 'ORDER-ABC')->payload, true));
+    }
+
+    #[Test]
+    public function itShouldAllowSameSagaIdForDifferentSagaNames(): void
+    {
+        $this->repositoryA->save('order', '{"saga":"order"}', new DateTimeImmutable(), null, 'order-1');
+        $this->repositoryA->save('invoice', '{"saga":"invoice"}', new DateTimeImmutable(), null, 'order-1');
+
+        self::assertSame(['saga' => 'order'], json_decode($this->repositoryA->get('order', 'order-1')->payload, true));
+        self::assertSame(['saga' => 'invoice'], json_decode($this->repositoryA->get('invoice', 'order-1')->payload, true));
     }
 }

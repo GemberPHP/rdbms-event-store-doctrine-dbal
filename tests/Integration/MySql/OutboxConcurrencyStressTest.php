@@ -28,6 +28,21 @@ final class OutboxConcurrencyStressTest extends TestCase
     #[Test]
     public function itShouldDispatchEveryMessageExactlyOnceWithConcurrentProcessors(): void
     {
+        $this->assertEveryMessageDispatchedExactlyOnce(withoutSkipLocked: false);
+    }
+
+    /**
+     * Without SKIP LOCKED (SQLite, MySQL 5.7, MariaDB < 10.6), concurrent processors select the same messages: only
+     * the guarded claim keeps them from dispatching the same ones.
+     */
+    #[Test]
+    public function itShouldDispatchEveryMessageExactlyOnceWithConcurrentProcessorsWithoutSkipLocked(): void
+    {
+        $this->assertEveryMessageDispatchedExactlyOnce(withoutSkipLocked: true);
+    }
+
+    private function assertEveryMessageDispatchedExactlyOnce(bool $withoutSkipLocked): void
+    {
         $dsn = MySqlTestEnvironment::getDsn();
 
         if ($dsn === null) {
@@ -50,7 +65,7 @@ final class OutboxConcurrencyStressTest extends TestCase
 
         try {
             for ($workerId = 1; $workerId <= self::WORKERS; ++$workerId) {
-                $processes[$workerId] = $this->spawnWorker([$workerId, self::BATCH_SIZE, $startAt]);
+                $processes[$workerId] = $this->spawnWorker([$workerId, self::BATCH_SIZE, $startAt, (int) $withoutSkipLocked]);
             }
         } catch (RuntimeException $exception) {
             foreach ($processes as [$process]) {

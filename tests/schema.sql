@@ -56,5 +56,7 @@ CREATE TABLE `outbox` (
   `retry_count` int NOT NULL DEFAULT 0,
   `processed_at` timestamp(6) NULL DEFAULT NULL,
   `dead_lettered_at` timestamp(6) NULL DEFAULT NULL,
+  `claimed_by` varchar(100) NULL DEFAULT NULL,
+  `claimed_until` timestamp(6) NULL DEFAULT NULL,
   PRIMARY KEY (`id`)
 );

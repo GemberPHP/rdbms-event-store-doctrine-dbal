@@ -19,6 +19,9 @@ final readonly class OutboxTableSchemaFactory
         string $retryCountFieldName = 'retry_count',
         string $deadLetteredAtFieldName = 'dead_lettered_at',
         string $deadLetteredAtFieldFormat = 'Y-m-d H:i:s.u',
+        string $claimedByFieldName = 'claimed_by',
+        string $claimedUntilFieldName = 'claimed_until',
+        string $claimedUntilFieldFormat = 'Y-m-d H:i:s.u',
     ): OutboxTableSchema {
         return new OutboxTableSchema(
             $tableName,
@@ -33,6 +36,9 @@ final readonly class OutboxTableSchemaFactory
             $retryCountFieldName,
             $deadLetteredAtFieldName,
             $deadLetteredAtFieldFormat,
+            $claimedByFieldName,
+            $claimedUntilFieldName,
+            $claimedUntilFieldFormat,
         );
     }
 }

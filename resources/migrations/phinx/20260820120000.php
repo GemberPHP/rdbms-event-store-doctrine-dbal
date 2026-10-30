@@ -17,6 +17,8 @@ final class V20260820120000 extends AbstractMigration
             ->addColumn('retry_count', 'integer', ['null' => false, 'default' => 0])
             ->addColumn('processed_at', 'timestamp', ['null' => true, 'default' => null, 'precision' => 6])
             ->addColumn('dead_lettered_at', 'timestamp', ['null' => true, 'default' => null, 'precision' => 6])
+            ->addColumn('claimed_by', 'string', ['limit' => 100, 'null' => true, 'default' => null])
+            ->addColumn('claimed_until', 'timestamp', ['null' => true, 'default' => null, 'precision' => 6])
             ->addIndex(['processed_at', 'dead_lettered_at', 'created_at', 'id'], ['name' => 'outbox_unprocessed'])
             ->create();
     }

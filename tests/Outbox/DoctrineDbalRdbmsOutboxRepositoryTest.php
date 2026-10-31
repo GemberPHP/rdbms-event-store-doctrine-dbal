@@ -109,6 +109,7 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
         $this->failDispatch($this->repository, 5);
         $this->failDispatch($this->repository, 5);
 
+        $this->expireBackoff();
         $messages = $this->repository->getUnprocessedMessages(10);
 
         self::assertCount(1, $messages);
@@ -151,6 +152,7 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
         // 1st increment: retry_count 0→1, not dead-lettered yet (1>1=false)
         $this->failDispatch($repository, 1);
 
+        $this->expireBackoff();
         $messages = $repository->getUnprocessedMessages(10);
         self::assertCount(2, $messages);
 
@@ -324,7 +326,9 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
 
         $this->failDispatch($this->repository, 5);
 
+        // Any processor may retry it after the backoff
         self::assertSame(['claimed_by' => null], $this->row('msg-1', 'claimed_by'));
+        $this->expireBackoff();
         self::assertSame(['msg-1'], $this->ids($this->createRepository('processor-2')->getUnprocessedMessages(10)));
     }
 
@@ -365,7 +369,7 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
             OutboxTableSchemaFactory::createDefault(),
             new DoctrineDbalRdbmsOutboxFactory(),
             $leaseSeconds,
-            $claimant,
+            claimant: $claimant,
         );
     }
 

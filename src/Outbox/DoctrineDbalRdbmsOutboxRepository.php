@@ -37,6 +37,8 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
      * @param int $leaseSeconds How long claimed messages are reserved for this processor. Must exceed the time to
      *                          dispatch a batch: after it, other processors take the messages over. Measured with the
      *                          database clock, so all processors share one clock.
+     * @param int $retryDelaySeconds Wait before retrying a failed message, doubled per failed attempt
+     * @param int $maxRetryDelaySeconds Longest wait before retrying a failed message
      * @param string|null $claimant Identifies this processor in its claims; defaults to host, process and a random part
      */
     public function __construct(
@@ -44,6 +46,8 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
         private OutboxTableSchema $tableSchema,
         private DoctrineDbalRdbmsOutboxFactory $outboxFactory,
         private int $leaseSeconds = 300,
+        private int $retryDelaySeconds = 5,
+        private int $maxRetryDelaySeconds = 300,
         private ?string $claimant = null,
     ) {
         $this->host = gethostname() ?: 'unknown';
@@ -145,8 +149,10 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
     }
 
     /**
-     * Counts a failed dispatch of messages claimed by this processor and releases them, so they are retried. A failure
-     * of a message another processor took over (after the lease expired), or that was delivered meanwhile, is ignored.
+     * Counts a failed dispatch of messages claimed by this processor and releases them for a retry after a backoff
+     * (claimed_until doubles as "not before"). After the first attempt and $maxRetries retries, they're dead-lettered.
+     * A failure of a message another processor took over (after the lease expired), or that was delivered meanwhile,
+     * is ignored.
      */
     #[Override]
     public function incrementRetryCount(int $maxRetries, string ...$messageIds): void
@@ -157,9 +163,10 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
 
         $schema = $this->tableSchema;
 
+        // retry_count is incremented last: MySQL evaluates the assignments in order, other databases all with the old
+        // values, so the other assignments only use the old retry_count on every database
         $this->connection->createQueryBuilder()
             ->update($schema->tableName)
-            ->set($schema->retryCountFieldName, sprintf('%s + 1', $schema->retryCountFieldName))
             ->set(
                 $schema->deadLetteredAtFieldName,
                 sprintf(
@@ -169,7 +176,11 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
                 ),
             )
             ->set($schema->claimedByFieldName, 'NULL')
-            ->set($schema->claimedUntilFieldName, 'NULL')
+            ->set(
+                $schema->claimedUntilFieldName,
+                $this->connection->getDatabasePlatform()->getDateAddSecondsExpression($this->now(), sprintf('(%s)', $this->retryDelay())),
+            )
+            ->set($schema->retryCountFieldName, sprintf('%s + 1', $schema->retryCountFieldName))
             ->where(sprintf('%s IN (:ids)', $schema->idFieldName))
             ->andWhere(sprintf('%s = :claimant', $schema->claimedByFieldName))
             ->andWhere(sprintf('%s IS NULL', $schema->processedAtFieldName))
@@ -314,6 +325,29 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
     {
         /** @var list<string> */
         return $queryBuilder->executeQuery()->fetchFirstColumn();
+    }
+
+    /**
+     * Seconds to wait before the next attempt, by the number of failed attempts so far: doubling from
+     * $retryDelaySeconds up to $maxRetryDelaySeconds.
+     */
+    private function retryDelay(): string
+    {
+        if ($this->retryDelaySeconds <= 0) {
+            return '0';
+        }
+
+        $cases = [];
+
+        for ($attempts = 0, $delay = $this->retryDelaySeconds; $delay < $this->maxRetryDelaySeconds; ++$attempts, $delay *= 2) {
+            $cases[] = sprintf('WHEN %d THEN %d', $attempts, $delay);
+        }
+
+        if ($cases === []) {
+            return (string) $this->maxRetryDelaySeconds;
+        }
+
+        return sprintf('CASE %s %s ELSE %d END', $this->tableSchema->retryCountFieldName, implode(' ', $cases), $this->maxRetryDelaySeconds);
     }
 
     /**

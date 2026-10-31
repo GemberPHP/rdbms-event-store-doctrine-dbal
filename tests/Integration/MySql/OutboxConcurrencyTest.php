@@ -121,6 +121,25 @@ final class OutboxConcurrencyTest extends TestCase
         self::assertSame('REPEATABLE-READ', $this->connectionA->fetchOne('SELECT @@transaction_isolation'));
     }
 
+    #[Test]
+    public function itShouldDeadLetterAfterTheFirstAttemptAndMaxRetriesRetries(): void
+    {
+        $repository = $this->createRepository($this->connectionA, 'processor-a');
+
+        // max_retries 2: the first attempt and 2 retries, as on every database
+        foreach ([1, 2, 3] as $attempt) {
+            $this->connectionA->executeStatement('UPDATE outbox SET claimed_until = NULL WHERE claimed_by IS NULL');
+            $repository->getUnprocessedMessages(10);
+            $repository->incrementRetryCount(2, 'msg-1');
+
+            self::assertSame(
+                $attempt === 3,
+                $this->connectionA->fetchOne("SELECT dead_lettered_at FROM outbox WHERE id = 'msg-1'") !== null,
+                sprintf('Dead-lettered after attempt %d', $attempt),
+            );
+        }
+    }
+
     /**
      * The lease is in UTC: a session time zone with daylight saving time doesn't shift or break it. A claim just before
      * the spring-forward gap (02:00–03:00 Europe/Amsterdam doesn't exist) would otherwise get an invalid local time.

@@ -170,7 +170,7 @@ final class OutboxConcurrencyTest extends TestCase
             OutboxTableSchemaFactory::createDefault(claimedByFieldName: $claimedByFieldName),
             new DoctrineDbalRdbmsOutboxFactory(),
             $leaseSeconds,
-            $claimant,
+            claimant: $claimant,
         );
     }
 }

@@ -57,6 +57,6 @@ CREATE TABLE `outbox` (
   `processed_at` timestamp(6) NULL DEFAULT NULL,
   `dead_lettered_at` timestamp(6) NULL DEFAULT NULL,
   `claimed_by` varchar(100) NULL DEFAULT NULL,
-  `claimed_until` timestamp(6) NULL DEFAULT NULL,
+  `claimed_until` datetime(6) NULL DEFAULT NULL,
   PRIMARY KEY (`id`)
 );

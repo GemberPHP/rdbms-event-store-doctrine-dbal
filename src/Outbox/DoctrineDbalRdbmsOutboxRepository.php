@@ -268,7 +268,6 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
     private function claimCandidates(array $messageIds): void
     {
         $schema = $this->tableSchema;
-        $platform = $this->connection->getDatabasePlatform();
 
         // The conditions are evaluated against the latest committed row: a message claimed, processed or
         // dead-lettered since it was selected isn't claimed again
@@ -277,7 +276,7 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
             ->set($schema->claimedByFieldName, ':claimant')
             ->set(
                 $schema->claimedUntilFieldName,
-                $platform->getDateAddSecondsExpression($platform->getCurrentTimestampSQL(), (string) $this->leaseSeconds),
+                $this->connection->getDatabasePlatform()->getDateAddSecondsExpression($this->now(), (string) $this->leaseSeconds),
             )
             ->where(sprintf('%s IN (:ids)', $schema->idFieldName))
             ->andWhere(sprintf('%s IS NULL', $schema->processedAtFieldName))
@@ -293,11 +292,19 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
      */
     private function claimExpired(): string
     {
-        return sprintf(
-            '(%1$s IS NULL OR %1$s <= %2$s)',
-            $this->tableSchema->claimedUntilFieldName,
-            $this->connection->getDatabasePlatform()->getCurrentTimestampSQL(),
-        );
+        return sprintf('(%1$s IS NULL OR %1$s <= %2$s)', $this->tableSchema->claimedUntilFieldName, $this->now());
+    }
+
+    /**
+     * The current time of the database in UTC: the same for all processors, and without the gaps and repeats of a
+     * session time zone with daylight saving time (claimed_until is a datetime, stored without time zone conversion).
+     * SQLite's CURRENT_TIMESTAMP is UTC already.
+     */
+    private function now(): string
+    {
+        $platform = $this->connection->getDatabasePlatform();
+
+        return $platform instanceof AbstractMySQLPlatform ? 'UTC_TIMESTAMP()' : $platform->getCurrentTimestampSQL();
     }
 
     /**

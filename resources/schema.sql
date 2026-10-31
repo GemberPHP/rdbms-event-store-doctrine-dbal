@@ -62,7 +62,7 @@ CREATE TABLE `outbox` (
   `processed_at` timestamp(6) NULL DEFAULT NULL,
   `dead_lettered_at` timestamp(6) NULL DEFAULT NULL,
   `claimed_by` varchar(100) COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `claimed_until` timestamp(6) NULL DEFAULT NULL,
+  `claimed_until` datetime(6) NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `outbox_unprocessed` (`processed_at`, `dead_lettered_at`, `created_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

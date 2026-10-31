@@ -126,6 +126,7 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
         $this->failDispatch($this->repository, 3);
 
         // After 3 increments, retry_count=3, not yet dead-lettered
+        $this->expireBackoff();
         $messages = $this->repository->getUnprocessedMessages(10);
         self::assertCount(1, $messages);
         self::assertSame(3, $messages[0]->retryCount);
@@ -274,6 +275,49 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
     }
 
     #[Test]
+    public function itShouldRetryFailedMessageOnlyAfterABackoff(): void
+    {
+        $this->repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
+
+        $this->repository->getUnprocessedMessages(10);
+        $this->repository->incrementRetryCount(5, 'msg-1');
+
+        // Not retried on the next poll, but after the backoff
+        self::assertSame([], $this->createRepository('processor-2')->getUnprocessedMessages(10));
+        self::assertSame(5, $this->backoffSeconds('msg-1'));
+    }
+
+    #[Test]
+    public function itShouldDoubleTheBackoffPerFailedAttemptUpToTheMaximum(): void
+    {
+        $this->repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
+
+        $this->failDispatch($this->repository, 100);
+        self::assertSame(5, $this->backoffSeconds('msg-1'));
+
+        $this->failDispatch($this->repository, 100);
+        self::assertSame(10, $this->backoffSeconds('msg-1'));
+
+        $this->connection->executeStatement("UPDATE outbox SET retry_count = 20 WHERE id = 'msg-1'");
+        $this->failDispatch($this->repository, 100);
+        self::assertSame(300, $this->backoffSeconds('msg-1'));
+    }
+
+    #[Test]
+    public function itShouldDeadLetterAfterTheFirstAttemptAndMaxRetriesRetries(): void
+    {
+        $this->repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
+
+        // max_retries 2: the first attempt and 2 retries
+        $this->failDispatch($this->repository, 2);
+        $this->failDispatch($this->repository, 2);
+        self::assertNull($this->row('msg-1', 'dead_lettered_at')['dead_lettered_at']);
+
+        $this->failDispatch($this->repository, 2);
+        self::assertNotNull($this->row('msg-1', 'dead_lettered_at')['dead_lettered_at']);
+    }
+
+    #[Test]
     public function itShouldReleaseClaimWhenDispatchFailed(): void
     {
         $this->repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
@@ -330,7 +374,28 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
      */
     private function failDispatch(DoctrineDbalRdbmsOutboxRepository $repository, int $maxRetries): void
     {
+        $this->expireBackoff();
+
         $repository->incrementRetryCount($maxRetries, ...$this->ids($repository->getUnprocessedMessages(10)));
+    }
+
+    /**
+     * Lets messages waiting for a retry be claimed right away.
+     */
+    private function expireBackoff(): void
+    {
+        $this->connection->executeStatement('UPDATE outbox SET claimed_until = NULL WHERE claimed_by IS NULL');
+    }
+
+    private function backoffSeconds(string $id): int
+    {
+        $seconds = $this->connection->fetchOne(
+            'SELECT ROUND((julianday(claimed_until) - julianday(CURRENT_TIMESTAMP)) * 86400) FROM outbox WHERE id = ? AND claimed_by IS NULL',
+            [$id],
+        );
+        self::assertIsNumeric($seconds);
+
+        return (int) $seconds;
     }
 
     /**

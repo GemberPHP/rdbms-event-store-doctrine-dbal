@@ -121,6 +121,25 @@ final class OutboxConcurrencyTest extends TestCase
         self::assertSame('REPEATABLE-READ', $this->connectionA->fetchOne('SELECT @@transaction_isolation'));
     }
 
+    /**
+     * The lease is in UTC: a session time zone with daylight saving time doesn't shift or break it. A claim just before
+     * the spring-forward gap (02:00–03:00 Europe/Amsterdam doesn't exist) would otherwise get an invalid local time.
+     */
+    #[Test]
+    public function itShouldClaimWithALeaseInUtcWhateverTheSessionTimeZone(): void
+    {
+        // 2026-03-29 01:59:59 Europe/Amsterdam, one second before daylight saving time starts
+        $this->connectionA->executeStatement("SET time_zone = 'Europe/Amsterdam', timestamp = 1774745999");
+        $this->connectionB->executeStatement("SET time_zone = '+14:00', timestamp = 1774745999");
+
+        self::assertCount(2, $this->createRepository($this->connectionA, 'processor-a')->getUnprocessedMessages(10));
+
+        self::assertEquals(300, $this->connectionA->fetchOne(
+            "SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), claimed_until) FROM outbox WHERE id = 'msg-1'",
+        ));
+        self::assertSame([], $this->createRepository($this->connectionB, 'processor-b')->getUnprocessedMessages(10));
+    }
+
     private function createRepository(
         Connection $connection,
         string $claimant,

@@ -24,7 +24,7 @@ The tables (event store, saga store, snapshot store and outbox) are available as
 - Doctrine migrations: [resources/migrations/doctrine](resources/migrations/doctrine) (namespace `DoctrineMigrations`; copy them into your migrations directory)
 - Phinx migrations: [resources/migrations/phinx](resources/migrations/phinx)
 
-While in 0.x, released migrations are changed in place: a database that already ran them needs the manual steps in [Upgrading](https://gemberphp.github.io/event-sourcing/upgrading/).
+While in 0.x, released migrations are changed in place: a database that already ran them needs the manual steps in [UPGRADE.md](UPGRADE.md).
 
 ## Documentation
 

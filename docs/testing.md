@@ -18,13 +18,13 @@ The tests in `tests/Integration/MySql` therefore run against a real MySQL server
 
 | Test | What it verifies |
 |------|------------------|
-| `EventStoreConcurrencyTest` (group `mysql`) | Uses two connections. Writer A saves inside an open transaction, holding its locks, and writer B then saves with a 1 second lock wait timeout. Writers with overlapping boundaries, or where one appends an event type the other reads, must block. Writers with the same tags but unrelated event types must not. It also checks that lock rows survive a rollback, that a real deadlock inside an application transaction (with a child process, `deadlock_child.php`) leaves that transaction usable, and that a writer inside an application transaction that loaded before another writer committed a matching event is rejected (stale snapshot), while unrelated commits don't reject it. Tags differing only in case (`course-1` / `COURSE-1`) must be separate streams when loading, counting and saving. |
-| `EventStoreConcurrencyStressTest` (group `mysql-stress`) | Spawns 8 worker processes (`worker.php`) that start at the same moment and concurrently subscribe students to courses with a fixed capacity, using both overlapping and identical boundaries. Every course must end exactly at capacity, without deadlocks or lock wait timeouts, and the workers must have run into optimistic lock conflicts. A second scenario shares students across courses and stamps `applied_at` up to 30 ms in the past, so events commit out of timestamp order: the optimistic lock must still detect every conflicting event (an `applied_at`-based check fails this in about 8 of 10 runs). A third scenario loads and saves inside each worker's own transaction, like a transaction around the command handler: under REPEATABLE READ the check must not count from the snapshot taken at the load (without the stale snapshot check, capacity is exceeded in every run). Deadlocks are allowed in that scenario and retried. A fourth scenario has half the workers write the course tag in uppercase: every stream, as the event store loads and counts it, must stay within capacity (with a case-insensitive `domain_tag` column, capacity is exceeded in every run, as differently cased writers read each other's events but lock different keys). |
-| `SagaStoreConcurrencyTest` (group `mysql`) | Uses two connections. A saga save inside an application transaction that loaded an older revision is rejected, and a second creation of the same saga is rejected (unique saga id). |
-| `SagaStoreConcurrencyStressTest` (group `mysql-stress`) | Spawns 8 worker processes (`saga_worker.php`) that load, change and save the same 3 sagas concurrently, retrying only concurrency conflicts (any other failure fails the worker). Every change must be saved and end up in the stored saga exactly once, each saga's revision must match its number of changes, and there must be exactly one saga per saga id. A second scenario loads and saves inside each worker's own transaction. |
-| `OutboxConcurrencyTest` (group `mysql`) | Uses two connections. A processor skips the messages another processor is claiming at that moment without waiting for its lock (`SKIP LOCKED`), and takes over messages whose lease expired. A failed claim rolls back, and claiming doesn't change the isolation level of the connection. A failed message is dead-lettered after the first attempt and `max_retries` retries, as on SQLite, and waits its backoff in UTC whatever the session time zone. A poll doesn't read (or sort) all messages that failed: neither while they wait for a retry, nor when they're all due at once. |
-| `OutboxConcurrencyStressTest` (group `mysql-stress`) | Spawns 4 outbox processors (`outbox_worker.php`) that start at the same moment and process 1,000 messages until all are processed: every message must be dispatched exactly once, and every processor must have dispatched some. A second scenario declares MySQL 5.7, which has no `SKIP LOCKED`, so only the guarded claim keeps the processors from dispatching the same messages (as on SQLite, MySQL 5.7 or MariaDB < 10.6). Without claiming, about 97 % of the messages are dispatched more than once. |
-| `OutboxSqliteConcurrencyTest` (default suite) | Spawns 3 outbox processors on one SQLite file (no `SKIP LOCKED`): every message must be dispatched exactly once and no processor may fail (SQLite rejects concurrent read-then-write transactions as "database is locked", so the claim runs without a transaction there). |
+| `EventStoreConcurrencyTest` (group `mysql`) | With two connections: writers with overlapping boundaries block each other, unrelated ones don't; lock rows survive a rollback; a deadlock leaves an application transaction usable; a stale snapshot inside an application transaction is rejected; tags differing only in case are separate streams. |
+| `EventStoreConcurrencyStressTest` (group `mysql-stress`) | 8 worker processes (`worker.php`) subscribe students to courses concurrently: no course may exceed its capacity, without deadlocks or lock wait timeouts. Scenarios: overlapping boundaries, shared tags with `applied_at` out of commit order, an application transaction around load and save, and differently cased tags. |
+| `SagaStoreConcurrencyTest` (group `mysql`) | With two connections: a save of an older revision inside an application transaction is rejected, and so is a second creation of the same saga. |
+| `SagaStoreConcurrencyStressTest` (group `mysql-stress`) | 8 worker processes (`saga_worker.php`) change the same 3 sagas concurrently: every change is saved exactly once, revisions match, one saga per saga id. Also inside an application transaction. |
+| `OutboxConcurrencyTest` (group `mysql`) | With two connections: claimed messages are skipped without waiting (`SKIP LOCKED`), expired leases are taken over, failed claims roll back, dead-lettering and backoff behave as on SQLite, and a poll doesn't scan messages waiting for a retry. |
+| `OutboxConcurrencyStressTest` (group `mysql-stress`) | 4 outbox processors (`outbox_worker.php`) process 1,000 messages: every message is dispatched exactly once. Also without `SKIP LOCKED` (as on MySQL 5.7). |
+| `OutboxSqliteConcurrencyTest` (default suite) | 3 outbox processors on one SQLite file: every message is dispatched exactly once and no processor fails. |
 
 ### Start MySQL
 
@@ -58,7 +58,7 @@ Only the two-connection tests:
 GEMBER_MYSQL_DSN=pdo-mysql://root:root@127.0.0.1:33061/gember_test vendor/bin/phpunit --no-coverage --group mysql
 ```
 
-Only the stress test:
+Only the stress tests (event store, saga store and outbox):
 
 ```bash
 GEMBER_MYSQL_DSN=pdo-mysql://root:root@127.0.0.1:33061/gember_test vendor/bin/phpunit --no-coverage --group mysql-stress
@@ -66,13 +66,13 @@ GEMBER_MYSQL_DSN=pdo-mysql://root:root@127.0.0.1:33061/gember_test vendor/bin/ph
 
 To combine groups, repeat the option (`--group mysql --group mysql-stress`); a comma-separated list runs no tests.
 
-The stress test uses 8 workers, 3 courses with capacity 15, and 40 attempts per worker. Change the constants at
-the top of `EventStoreConcurrencyStressTest` to adjust the load.
+The event store stress test uses 8 workers and 40 attempts per worker (the constants `WORKERS` and
+`ATTEMPTS_PER_WORKER` in `EventStoreConcurrencyStressTest`); the courses and capacity are set per scenario in its test methods.
 
 ### Run the stress workers manually
 
 For a heavier or repeated load, run the workers directly. Each worker takes
-`<workerId> <courses> <capacity> <attempts> [<startAt> [<students> <skewMs> [<outerTransaction>]]]` and prints a JSON summary with the number of subscriptions,
+`<workerId> <courses> <capacity> <attempts> [<startAt> [<students> <skewMs> [<outerTransaction> [<caseVariants>]]]]` and prints a JSON summary with the number of subscriptions,
 optimistic lock conflicts, deadlocks and lock wait timeouts. Even worker ids use the boundary
 `{course, student}`, odd ones `{course}`.
 

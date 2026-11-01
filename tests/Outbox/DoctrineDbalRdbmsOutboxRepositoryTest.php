@@ -13,6 +13,8 @@ use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\TableSchema\OutboxTableSchemaFactory;
 use Override;
+use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -286,7 +288,7 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
 
         // Not retried on the next poll, but after the backoff
         self::assertSame([], $this->createRepository('processor-2')->getUnprocessedMessages(10));
-        self::assertSame(5, $this->backoffSeconds('msg-1'));
+        self::assertEqualsWithDelta(5, $this->backoffSeconds('msg-1'), 1);
     }
 
     #[Test]
@@ -294,15 +296,76 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
     {
         $this->repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
 
-        $this->failDispatch($this->repository, 100);
-        self::assertSame(5, $this->backoffSeconds('msg-1'));
+        // Failed attempts so far → wait: doubling from 5 s, at most 300 s
+        foreach ([0 => 5, 1 => 10, 2 => 20, 3 => 40, 4 => 80, 5 => 160, 6 => 300, 7 => 300, 20 => 300] as $retryCount => $delay) {
+            $this->connection->executeStatement("UPDATE outbox SET retry_count = ? WHERE id = 'msg-1'", [$retryCount]);
+            $this->failDispatch($this->repository, 100);
 
-        $this->failDispatch($this->repository, 100);
-        self::assertSame(10, $this->backoffSeconds('msg-1'));
+            self::assertEqualsWithDelta($delay, $this->backoffSeconds('msg-1'), 1, sprintf('After %d failed attempts', $retryCount + 1));
+        }
+    }
 
-        $this->connection->executeStatement("UPDATE outbox SET retry_count = 20 WHERE id = 'msg-1'");
-        $this->failDispatch($this->repository, 100);
-        self::assertSame(300, $this->backoffSeconds('msg-1'));
+    /**
+     * @param list<int> $delays
+     */
+    #[Test]
+    #[DataProvider('provideRetryDelays')]
+    public function itShouldWaitTheConfiguredRetryDelay(int $retryDelaySeconds, int $maxRetryDelaySeconds, array $delays): void
+    {
+        $repository = $this->createRepository('processor-1', retryDelaySeconds: $retryDelaySeconds, maxRetryDelaySeconds: $maxRetryDelaySeconds);
+        $repository->save(new RdbmsOutboxMessage('msg-1', 'event', 'Event1', '{}', new DateTimeImmutable('2024-10-14 12:00:00')));
+
+        foreach ($delays as $attempt => $delay) {
+            $this->failDispatch($repository, 100);
+
+            self::assertEqualsWithDelta($delay, $this->backoffSeconds('msg-1'), 1, sprintf('After %d failed attempts', $attempt + 1));
+        }
+
+        if ($delays[0] === 0) {
+            self::assertCount(1, $this->createRepository('processor-2')->getUnprocessedMessages(10));
+        }
+    }
+
+    /**
+     * @return iterable<string, array{int, int, list<int>}>
+     */
+    public static function provideRetryDelays(): iterable
+    {
+        yield 'no backoff' => [0, 300, [0, 0, 0]];
+        yield 'fixed delay' => [60, 60, [60, 60, 60]];
+        yield 'delay above the maximum' => [10, 5, [5, 5, 5]];
+        yield 'doubling up to the maximum' => [7, 20, [7, 14, 20]];
+    }
+
+    #[Test]
+    public function itShouldRejectInvalidLeaseOrRetryDelays(): void
+    {
+        foreach ([[-1, 5, 300], [300, -1, 300], [300, 5, -1], [300, 5, 31_536_001]] as [$lease, $delay, $max]) {
+            try {
+                $this->createRepository('processor-1', $lease, retryDelaySeconds: $delay, maxRetryDelaySeconds: $max);
+
+                self::fail(sprintf('Expected lease %d, delay %d, max %d to be rejected', $lease, $delay, $max));
+            } catch (InvalidArgumentException) {
+            }
+        }
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    #[Test]
+    public function itShouldReturnClaimableMessagesBehindMessagesWaitingForARetry(): void
+    {
+        // Oldest first: two waiting for a retry, one due for a retry, then two never claimed
+        foreach (['waiting-1', 'waiting-2', 'due-1', 'new-1', 'new-2'] as $i => $id) {
+            $this->repository->save(new RdbmsOutboxMessage($id, 'event', 'Event', '{}', new DateTimeImmutable(sprintf('2024-10-14 12:00:0%d', $i))));
+        }
+
+        $this->connection->executeStatement("UPDATE outbox SET claimed_until = DATETIME(CURRENT_TIMESTAMP, '+300 SECOND') WHERE id LIKE 'waiting-%'");
+        $this->connection->executeStatement("UPDATE outbox SET claimed_until = DATETIME(CURRENT_TIMESTAMP, '-1 SECOND') WHERE id = 'due-1'");
+
+        // Merged by age, both kinds count towards the batch size
+        self::assertSame(['due-1', 'new-1'], $this->ids($this->repository->getUnprocessedMessages(2)));
+        self::assertSame(['new-2'], $this->ids($this->createRepository('processor-2')->getUnprocessedMessages(10)));
     }
 
     #[Test]
@@ -362,14 +425,20 @@ final class DoctrineDbalRdbmsOutboxRepositoryTest extends TestCase
         $this->repository->incrementRetryCount(5);
     }
 
-    private function createRepository(string $claimant, int $leaseSeconds = 300): DoctrineDbalRdbmsOutboxRepository
-    {
+    private function createRepository(
+        string $claimant,
+        int $leaseSeconds = 300,
+        int $retryDelaySeconds = 5,
+        int $maxRetryDelaySeconds = 300,
+    ): DoctrineDbalRdbmsOutboxRepository {
         return new DoctrineDbalRdbmsOutboxRepository(
             $this->connection,
             OutboxTableSchemaFactory::createDefault(),
             new DoctrineDbalRdbmsOutboxFactory(),
             $leaseSeconds,
-            claimant: $claimant,
+            $claimant,
+            $retryDelaySeconds,
+            $maxRetryDelaySeconds,
         );
     }
 

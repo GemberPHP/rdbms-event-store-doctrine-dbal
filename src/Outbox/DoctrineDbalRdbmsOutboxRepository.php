@@ -11,11 +11,11 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Platforms\Exception\NotSupported;
 use Doctrine\DBAL\Query\ForUpdate\ConflictResolutionMode;
-use Doctrine\DBAL\Query\QueryBuilder;
 use Gember\DependencyContracts\Outbox\Rdbms\RdbmsOutboxMessage;
 use Gember\DependencyContracts\Outbox\Rdbms\RdbmsOutboxRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\TableSchema\OutboxTableSchema;
 use Override;
+use InvalidArgumentException;
 use Throwable;
 
 /**
@@ -30,6 +30,11 @@ use Throwable;
  */
 final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRepository
 {
+    /**
+     * A year: longer delays would overflow the datetime column.
+     */
+    private const int MAX_RETRY_DELAY_SECONDS = 31_536_000;
+
     private string $host;
     private string $instance;
 
@@ -37,19 +42,26 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
      * @param int $leaseSeconds How long claimed messages are reserved for this processor. Must exceed the time to
      *                          dispatch a batch: after it, other processors take the messages over. Measured with the
      *                          database clock, so all processors share one clock.
-     * @param int $retryDelaySeconds Wait before retrying a failed message, doubled per failed attempt
-     * @param int $maxRetryDelaySeconds Longest wait before retrying a failed message
      * @param string|null $claimant Identifies this processor in its claims; defaults to host, process and a random part
+     * @param int $retryDelaySeconds Wait before retrying a failed message, doubled per failed attempt
+     * @param int $maxRetryDelaySeconds Longest wait before retrying a failed message (at most a year)
      */
     public function __construct(
         private Connection $connection,
         private OutboxTableSchema $tableSchema,
         private DoctrineDbalRdbmsOutboxFactory $outboxFactory,
         private int $leaseSeconds = 300,
+        private ?string $claimant = null,
         private int $retryDelaySeconds = 5,
         private int $maxRetryDelaySeconds = 300,
-        private ?string $claimant = null,
     ) {
+        if ($leaseSeconds < 0 || $retryDelaySeconds < 0 || $maxRetryDelaySeconds < 0 || $maxRetryDelaySeconds > self::MAX_RETRY_DELAY_SECONDS) {
+            throw new InvalidArgumentException(sprintf(
+                'Outbox lease and retry delays must be at least 0 seconds, and the longest retry delay at most %d seconds',
+                self::MAX_RETRY_DELAY_SECONDS,
+            ));
+        }
+
         $this->host = gethostname() ?: 'unknown';
         $this->instance = bin2hex(random_bytes(4));
     }
@@ -204,12 +216,8 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
      */
     private function claim(int $limit): array
     {
-        $candidates = $this->createCandidateQuery($limit);
-
-        try {
-            $candidates->forUpdate(ConflictResolutionMode::SKIP_LOCKED)->getSQL();
-        } catch (NotSupported) {
-            $messageIds = $this->fetchIds($this->createCandidateQuery($limit));
+        if (!$this->supportsSkipLocked()) {
+            $messageIds = $this->findCandidates($limit, false);
 
             if ($messageIds !== []) {
                 $this->claimCandidates($messageIds);
@@ -221,8 +229,8 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
         $ownsTransaction = !$this->connection->isTransactionActive();
 
         if ($ownsTransaction) {
-            // Lock only the selected rows: under REPEATABLE READ the scan would also gap-lock the end of the
-            // unprocessed range, blocking new outbox rows (any command) for as long as the claim takes
+            // Lock only the rows read: under REPEATABLE READ the scan would also gap-lock the end of the unprocessed
+            // range, blocking new outbox rows (any command) for as long as the claim takes
             if ($this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
                 $this->connection->executeStatement('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
             }
@@ -231,7 +239,7 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
         }
 
         try {
-            $messageIds = $this->fetchIds($candidates);
+            $messageIds = $this->findCandidates($limit, true);
 
             if ($messageIds !== []) {
                 $this->claimCandidates($messageIds);
@@ -255,22 +263,70 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
         return $messageIds;
     }
 
+    private function supportsSkipLocked(): bool
+    {
+        try {
+            $this->connection->createQueryBuilder()
+                ->select('1')
+                ->from($this->tableSchema->tableName)
+                ->forUpdate(ConflictResolutionMode::SKIP_LOCKED)
+                ->getSQL();
+
+            return true;
+        } catch (NotSupported) {
+            return false;
+        }
+    }
+
     /**
-     * Unprocessed messages that aren't claimed (or whose claim expired), oldest first.
+     * Claimable messages: the oldest never claimed ones and the ones whose claim expired or retry is due first, merged
+     * by age. Each is read in the order of the (processed_at, dead_lettered_at, claimed_until, created_at, id) index,
+     * so it stops after $limit rows: messages waiting for a retry are the oldest unprocessed messages, and a single
+     * range in age order would read past all of them on every poll.
+     *
+     * @return list<string>
      */
-    private function createCandidateQuery(int $limit): QueryBuilder
+    private function findCandidates(int $limit, bool $skipLocked): array
+    {
+        $claimedUntil = $this->tableSchema->claimedUntilFieldName;
+
+        $candidates = [
+            ...$this->fetchCandidates(sprintf('%s IS NULL', $claimedUntil), [], $limit, $skipLocked),
+            ...$this->fetchCandidates(sprintf('%s <= %s', $claimedUntil, $this->now()), [$claimedUntil], $limit, $skipLocked),
+        ];
+
+        usort($candidates, fn(array $a, array $b) => [$a['createdAt'], $a['id']] <=> [$b['createdAt'], $b['id']]);
+
+        return array_column(array_slice($candidates, 0, $limit), 'id');
+    }
+
+    /**
+     * @param list<string> $orderBy Columns to order by before created_at and id
+     *
+     * @return list<array{id: string, createdAt: string}>
+     */
+    private function fetchCandidates(string $claimCondition, array $orderBy, int $limit, bool $skipLocked): array
     {
         $schema = $this->tableSchema;
 
-        return $this->connection->createQueryBuilder()
-            ->select(sprintf('%s as id', $schema->idFieldName))
+        $queryBuilder = $this->connection->createQueryBuilder()
+            ->select(sprintf('%s as id', $schema->idFieldName), sprintf('%s as createdAt', $schema->createdAtFieldName))
             ->from($schema->tableName)
             ->where(sprintf('%s IS NULL', $schema->processedAtFieldName))
             ->andWhere(sprintf('%s IS NULL', $schema->deadLetteredAtFieldName))
-            ->andWhere($this->claimExpired())
-            ->orderBy($schema->createdAtFieldName, 'asc')
-            ->addOrderBy($schema->idFieldName, 'asc')
+            ->andWhere($claimCondition)
             ->setMaxResults($limit);
+
+        foreach ([...$orderBy, $schema->createdAtFieldName, $schema->idFieldName] as $column) {
+            $queryBuilder->addOrderBy($column, 'asc');
+        }
+
+        if ($skipLocked) {
+            $queryBuilder->forUpdate(ConflictResolutionMode::SKIP_LOCKED);
+        }
+
+        /** @var list<array{id: string, createdAt: string}> */
+        return $queryBuilder->executeQuery()->fetchAllAssociative();
     }
 
     /**
@@ -316,15 +372,6 @@ final readonly class DoctrineDbalRdbmsOutboxRepository implements RdbmsOutboxRep
         $platform = $this->connection->getDatabasePlatform();
 
         return $platform instanceof AbstractMySQLPlatform ? 'UTC_TIMESTAMP()' : $platform->getCurrentTimestampSQL();
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function fetchIds(QueryBuilder $queryBuilder): array
-    {
-        /** @var list<string> */
-        return $queryBuilder->executeQuery()->fetchFirstColumn();
     }
 
     /**

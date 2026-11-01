@@ -12,6 +12,7 @@ use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxFactory;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\DoctrineDbalRdbmsOutboxRepository;
 use Gember\RdbmsEventStoreDoctrineDbal\Outbox\TableSchema\OutboxTableSchemaFactory;
 use Override;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -129,7 +130,7 @@ final class OutboxConcurrencyTest extends TestCase
         // max_retries 2: the first attempt and 2 retries, as on every database
         foreach ([1, 2, 3] as $attempt) {
             $this->connectionA->executeStatement('UPDATE outbox SET claimed_until = NULL WHERE claimed_by IS NULL');
-            $repository->getUnprocessedMessages(10);
+            self::assertContains('msg-1', array_map(fn($message) => $message->id, $repository->getUnprocessedMessages(10)));
             $repository->incrementRetryCount(2, 'msg-1');
 
             self::assertSame(
@@ -138,6 +139,70 @@ final class OutboxConcurrencyTest extends TestCase
                 sprintf('Dead-lettered after attempt %d', $attempt),
             );
         }
+    }
+
+    /**
+     * The backoff is measured in UTC with the old retry count, also with a session time zone with daylight saving time.
+     */
+    #[Test]
+    public function itShouldRetryAfterABackoffInUtcWhateverTheSessionTimeZone(): void
+    {
+        // 2026-03-29 01:59:59 Europe/Amsterdam (frozen clock), one second before daylight saving time starts
+        $this->connectionA->executeStatement("SET time_zone = 'Europe/Amsterdam', timestamp = 1774745999");
+        $this->connectionB->executeStatement("SET time_zone = '+14:00', timestamp = 1774745999");
+
+        $repository = $this->createRepository($this->connectionA, 'processor-a');
+
+        foreach ([5, 10] as $delay) {
+            $this->connectionA->executeStatement("UPDATE outbox SET claimed_until = NULL WHERE claimed_by IS NULL AND id = 'msg-1'");
+            self::assertContains('msg-1', array_map(fn($message) => $message->id, $repository->getUnprocessedMessages(1)));
+            $repository->incrementRetryCount(5, 'msg-1');
+
+            self::assertEquals($delay, $this->connectionA->fetchOne(
+                "SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), claimed_until) FROM outbox WHERE id = 'msg-1' AND claimed_by IS NULL",
+            ));
+            self::assertNotContains('msg-1', array_map(fn($message) => $message->id, $this->createRepository($this->connectionB, 'processor-b')->getUnprocessedMessages(10)));
+            $this->connectionB->executeStatement("UPDATE outbox SET claimed_by = NULL, claimed_until = NULL WHERE claimed_by = 'processor-b'");
+        }
+    }
+
+    /**
+     * Messages that failed are the oldest unprocessed messages: a poll must not read (or sort) all of them.
+     *
+     * @param list<string> $expectedFirst
+     */
+    #[Test]
+    #[DataProvider('provideMessagesAheadOfTheQueue')]
+    public function itShouldNotReadAllMessagesThatFailed(string $claimedUntil, array $expectedFirst): void
+    {
+        $this->connectionA->executeStatement("UPDATE outbox SET created_at = NOW(6) WHERE id IN ('msg-1', 'msg-2')");
+        $this->connectionA->executeStatement('SET SESSION cte_max_recursion_depth = 10000');
+        $this->connectionA->executeStatement(sprintf(<<<'SQL'
+            INSERT INTO outbox (id, message_type, message_name, payload, created_at, retry_count, claimed_until)
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+            SELECT CONCAT('retry-', i), 'event', 'E', '{}', NOW(6) - INTERVAL 1 DAY + INTERVAL i MICROSECOND, 1, %s FROM n
+            SQL, $claimedUntil));
+
+        $this->connectionA->executeStatement('FLUSH STATUS');
+        $messages = $this->createRepository($this->connectionA, 'processor-a')->getUnprocessedMessages(2);
+        $reads = $this->connectionA->fetchAssociative("SHOW SESSION STATUS LIKE 'Handler_read_next'");
+
+        self::assertSame($expectedFirst, array_map(fn($message) => $message->id, $messages));
+        self::assertIsArray($reads);
+        self::assertIsNumeric($reads['Value']);
+        self::assertLessThan(100, (int) $reads['Value'], 'The poll read all messages that failed');
+    }
+
+    /**
+     * @return iterable<string, array{string, list<string>}>
+     */
+    public static function provideMessagesAheadOfTheQueue(): iterable
+    {
+        // Waiting for a retry (outage): skipped by the index range
+        yield 'waiting for a retry' => ['UTC_TIMESTAMP() + INTERVAL 1 HOUR', ['msg-1', 'msg-2']];
+
+        // All due at once (outage over): read in the order they're due, not sorted by age
+        yield 'due for a retry' => ['UTC_TIMESTAMP() - INTERVAL 1 HOUR', ['retry-1', 'retry-2']];
     }
 
     /**
